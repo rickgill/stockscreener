@@ -37,6 +37,26 @@
         Add symbols on the dashboard first, then return here to screen the saved watchlist.
       </section>
       <section id="screen-results" class="analysis-grid"></section>
+
+      <section class="subpage-block">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Model validation</p>
+            <h2 class="section-title">Rolling backtest report</h2>
+          </div>
+          <div class="subpage-actions">
+            <button id="export-backtest-button" class="ghost-button" type="button">Export CSV</button>
+            <button id="run-backtest-button" type="button">Run Backtest</button>
+          </div>
+        </div>
+        <section id="backtest-status" class="status" aria-live="polite"></section>
+        <section id="backtest-empty" class="empty-state hidden">
+          Add symbols on the dashboard first, then run the backtest to validate the signal engine.
+        </section>
+        <section id="backtest-summary" class="analysis-grid compact-grid"></section>
+        <section id="backtest-directions" class="analysis-grid compact-grid"></section>
+        <section id="backtest-symbols" class="analysis-grid"></section>
+      </section>
     </main>
 
     <script src="/screener.js"></script>

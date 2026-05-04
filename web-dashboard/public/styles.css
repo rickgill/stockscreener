@@ -212,6 +212,24 @@ input {
   line-height: 1.55;
 }
 
+.subpage-block {
+  margin-top: 28px;
+}
+
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 16px;
+}
+
+.section-title {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  letter-spacing: -0.04em;
+}
+
 .subpage-hero {
   align-items: end;
 }
@@ -227,6 +245,10 @@ input {
   color: var(--muted);
 }
 
+.analysis-range-bar {
+  margin-top: 18px;
+}
+
 .empty-state {
   margin-top: 18px;
   color: var(--muted);
@@ -235,6 +257,10 @@ input {
 .analysis-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-top: 18px;
+}
+
+.compact-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .analysis-head {
@@ -247,6 +273,30 @@ input {
 .analysis-score {
   margin: 0;
   color: var(--muted);
+}
+
+.analysis-chart-card {
+  align-content: start;
+}
+
+.analysis-chart-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.analysis-chart-status {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.analysis-local-range-tabs {
+  margin-top: 0;
+}
+
+.analysis-chart-section {
+  margin-top: 6px;
 }
 
 .metric-strip {
@@ -854,6 +904,11 @@ button:disabled {
   }
 
   .site-nav {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .section-head {
     flex-direction: column;
     align-items: flex-start;
   }

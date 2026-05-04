@@ -32,6 +32,12 @@
         </div>
       </section>
 
+      <section class="global-range-bar analysis-range-bar">
+        <div>
+          <p class="field-label">Global chart range</p>
+          <div id="trending-range-tabs" class="global-range-tabs" role="group" aria-label="Trending chart range options"></div>
+        </div>
+      </section>
       <section id="trending-status" class="status" aria-live="polite"></section>
       <section id="trending-empty" class="empty-state hidden">
         No trending stocks are available right now.
@@ -39,6 +45,7 @@
       <section id="trending-results" class="analysis-grid"></section>
     </main>
 
+    <script src="/signal-charts.js"></script>
     <script src="/trending.js"></script>
   </body>
 </html>

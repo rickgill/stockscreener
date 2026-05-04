@@ -36,6 +36,12 @@
         Signals here are inferred from market-wide price and volume behavior across leading stocks.
         They indicate likely buy or sell pressure, not direct real-time institutional order feeds.
       </section>
+      <section class="global-range-bar analysis-range-bar">
+        <div>
+          <p class="field-label">Global chart range</p>
+          <div id="flow-range-tabs" class="global-range-tabs" role="group" aria-label="Market flow chart range options"></div>
+        </div>
+      </section>
       <section id="flow-status" class="status" aria-live="polite"></section>
       <section id="flow-empty" class="empty-state hidden">
         No market flow leaders are available right now.
@@ -43,6 +49,7 @@
       <section id="flow-results" class="analysis-grid"></section>
     </main>
 
+    <script src="/signal-charts.js"></script>
     <script src="/institutional-flow.js"></script>
   </body>
 </html>

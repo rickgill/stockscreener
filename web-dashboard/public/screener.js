@@ -2,9 +2,20 @@ const resultsEl = document.querySelector("#screen-results");
 const statusEl = document.querySelector("#screen-status");
 const emptyEl = document.querySelector("#screen-empty");
 const runButton = document.querySelector("#run-screen-button");
+const backtestSummaryEl = document.querySelector("#backtest-summary");
+const backtestDirectionsEl = document.querySelector("#backtest-directions");
+const backtestSymbolsEl = document.querySelector("#backtest-symbols");
+const backtestStatusEl = document.querySelector("#backtest-status");
+const backtestEmptyEl = document.querySelector("#backtest-empty");
+const backtestButton = document.querySelector("#run-backtest-button");
+const exportBacktestButton = document.querySelector("#export-backtest-button");
 
 function setStatus(message) {
   statusEl.textContent = message || "";
+}
+
+function setBacktestStatus(message) {
+  backtestStatusEl.textContent = message || "";
 }
 
 function formatMoney(value, currency = "USD") {
@@ -27,14 +38,35 @@ function formatPercent(value) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
 }
 
+function formatHitRate(value) {
+  if (value == null || Number.isNaN(value)) {
+    return "N/A";
+  }
+
+  return `${(value * 100).toFixed(0)}%`;
+}
+
 function recommendationClass(label) {
-  if (label.includes("Buy")) {
+  if ((label || "").includes("Buy")) {
     return "positive";
   }
-  if (label.includes("Sell")) {
+  if ((label || "").includes("Sell")) {
     return "negative";
   }
   return "";
+}
+
+function formatDirectionLabel(direction) {
+  switch (direction) {
+    case "long":
+      return "Long setups";
+    case "short":
+      return "Short setups";
+    case "flat":
+      return "Flat / no-trade";
+    default:
+      return direction || "N/A";
+  }
 }
 
 async function apiRequest(url) {
@@ -74,12 +106,111 @@ function renderRecommendations(recommendations) {
           <span>1D ${formatPercent(item.metrics.oneDayChangePct)}</span>
           <span>1M ${formatPercent(item.metrics.monthReturnPct)}</span>
           <span>RSI ${item.metrics.rsi14 == null ? "N/A" : item.metrics.rsi14.toFixed(1)}</span>
+          <span>5D Hit ${formatHitRate(item.metrics.hitRate5d)}</span>
+          <span>20D Exp ${formatPercent(item.metrics.expectedReturn20d)}</span>
+          <span>ATR Stop ${formatPercent(item.metrics.stopDistancePct)}</span>
         </div>
         <ul class="analysis-notes">
           ${item.summary.map((note) => `<li>${note}</li>`).join("")}
         </ul>
       `;
       resultsEl.appendChild(article);
+    });
+}
+
+function renderBacktest(payload) {
+  const summary = payload.summary || [];
+  const directionSummary = payload.directionSummary || [];
+  const symbols = payload.symbols || [];
+  backtestSummaryEl.innerHTML = "";
+  backtestDirectionsEl.innerHTML = "";
+  backtestSymbolsEl.innerHTML = "";
+
+  if (!summary.length && !directionSummary.length && !symbols.length) {
+    backtestEmptyEl.classList.remove("hidden");
+    return;
+  }
+
+  backtestEmptyEl.classList.add("hidden");
+
+  summary
+    .sort((left, right) => right.totalSignals - left.totalSignals)
+    .forEach((item) => {
+      const card = document.createElement("article");
+      card.className = "analysis-card";
+      card.innerHTML = `
+        <div class="analysis-head">
+          <div>
+            <p class="field-label">Recommendation bucket</p>
+            <h2>${item.recommendation}</h2>
+          </div>
+          <div class="signal-chip ${recommendationClass(item.recommendation)}">${item.totalSignals} signals</div>
+        </div>
+        <div class="metric-strip">
+          <span>5D Hit ${formatHitRate(item.hitRate5d)}</span>
+          <span>20D Hit ${formatHitRate(item.hitRate20d)}</span>
+          <span>20D Alpha Hit ${formatHitRate(item.alphaHitRate20d)}</span>
+          <span>20D Net ${formatPercent(item.avgNet20d)}</span>
+          <span>20D Alpha Net ${formatPercent(item.avgAlphaNet20d)}</span>
+        </div>
+      `;
+      backtestSummaryEl.appendChild(card);
+    });
+
+  directionSummary
+    .sort((left, right) => right.totalSignals - left.totalSignals)
+    .forEach((item) => {
+      const card = document.createElement("article");
+      card.className = "analysis-card";
+      card.innerHTML = `
+        <div class="analysis-head">
+          <div>
+            <p class="field-label">Directional evaluation</p>
+            <h2>${formatDirectionLabel(item.direction)}</h2>
+          </div>
+          <div class="signal-chip">${item.totalSignals} signals</div>
+        </div>
+        <div class="metric-strip">
+          <span>20D Hit ${formatHitRate(item.hitRate20d)}</span>
+          <span>20D Alpha Hit ${formatHitRate(item.alphaHitRate20d)}</span>
+          <span>20D Net ${formatPercent(item.avgNet20d)}</span>
+          <span>20D Alpha Net ${formatPercent(item.avgAlphaNet20d)}</span>
+        </div>
+      `;
+      backtestDirectionsEl.appendChild(card);
+    });
+
+  symbols
+    .sort((left, right) => (right.overall?.totalSignals || 0) - (left.overall?.totalSignals || 0))
+    .forEach((item) => {
+      const longStats = item.byDirection?.long || null;
+      const shortStats = item.byDirection?.short || null;
+      const flatStats = item.byDirection?.flat || null;
+      const benchmarkSymbol = item.records?.[0]?.benchmarkSymbol || "benchmark";
+      const card = document.createElement("article");
+      card.className = "analysis-card";
+      card.innerHTML = `
+        <div class="analysis-head">
+          <div>
+            <p class="field-label">${item.symbol}</p>
+            <h2>${item.shortName || item.symbol}</h2>
+          </div>
+          <div class="signal-chip">${item.totalWindows} windows</div>
+        </div>
+        <div class="metric-strip">
+          <span>Overall 20D ${formatHitRate(item.overall?.hitRate20d)}</span>
+          <span>Overall Alpha ${formatHitRate(item.overall?.alphaHitRate20d)}</span>
+          <span>20D Net ${formatPercent(item.overall?.avgNet20d)}</span>
+          <span>20D Alpha Net ${formatPercent(item.overall?.avgAlphaNet20d)}</span>
+        </div>
+        <ul class="analysis-notes">
+          <li>All signals: ${item.overall?.totalSignals || 0} windows, 20-day alpha net ${formatPercent(item.overall?.avgAlphaNet20d)} versus ${benchmarkSymbol}.</li>
+          <li>Long setups: ${longStats?.totalSignals || 0} windows, hit ${formatHitRate(longStats?.hitRate20d)}, alpha hit ${formatHitRate(longStats?.alphaHitRate20d)}, net ${formatPercent(longStats?.avgNet20d)}.</li>
+          <li>Short setups: ${shortStats?.totalSignals || 0} windows, hit ${formatHitRate(shortStats?.hitRate20d)}, alpha hit ${formatHitRate(shortStats?.alphaHitRate20d)}, net ${formatPercent(shortStats?.avgNet20d)}.</li>
+          <li>Flat states: ${flatStats?.totalSignals || 0} windows, alpha net ${formatPercent(flatStats?.avgAlphaNet20d)} after turnover assumptions.</li>
+        </ul>
+      `;
+      backtestSymbolsEl.appendChild(card);
     });
 }
 
@@ -100,5 +231,39 @@ async function loadScreen() {
   }
 }
 
+async function loadBacktest() {
+  backtestButton.disabled = true;
+  exportBacktestButton.disabled = true;
+  setBacktestStatus("Running rolling backtest...");
+
+  try {
+    const payload = await apiRequest("/api/backtest/technical");
+    renderBacktest(payload);
+    setBacktestStatus(payload.symbols?.length ? "Backtest updated." : "");
+  } catch (error) {
+    backtestSummaryEl.innerHTML = "";
+    backtestDirectionsEl.innerHTML = "";
+    backtestSymbolsEl.innerHTML = "";
+    backtestEmptyEl.classList.add("hidden");
+    setBacktestStatus(error.message);
+  } finally {
+    backtestButton.disabled = false;
+    exportBacktestButton.disabled = false;
+  }
+}
+
+function exportBacktestCsv() {
+  exportBacktestButton.disabled = true;
+  setBacktestStatus("Preparing CSV export...");
+  window.location.assign("/api/backtest/technical?format=csv");
+  window.setTimeout(() => {
+    exportBacktestButton.disabled = false;
+    setBacktestStatus("Backtest CSV requested.");
+  }, 1200);
+}
+
 runButton.addEventListener("click", loadScreen);
+backtestButton.addEventListener("click", loadBacktest);
+exportBacktestButton.addEventListener("click", exportBacktestCsv);
 loadScreen();
+loadBacktest();
