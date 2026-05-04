@@ -77,6 +77,44 @@ const MARKET_FLOW_UNIVERSE = [
   "RIVN",
   "COIN",
 ];
+const BACKTEST_LOOKBACK_RANGE = "3y";
+const BACKTEST_TRANSACTION_COST_PCT = 0.4;
+const BENCHMARKS = {
+  broad: "SPY",
+  growth: "QQQ",
+};
+const SECTOR_BENCHMARKS = {
+  AAPL: "XLK",
+  MSFT: "XLK",
+  NVDA: "XLK",
+  AVGO: "XLK",
+  ORCL: "XLK",
+  CRM: "XLK",
+  AMD: "XLK",
+  MU: "XLK",
+  ARM: "XLK",
+  PLTR: "XLK",
+  SMCI: "XLK",
+  AMZN: "XLY",
+  TSLA: "XLY",
+  NFLX: "XLC",
+  GOOGL: "XLC",
+  META: "XLC",
+  SHOP: "XLY",
+  UBER: "XLY",
+  RIVN: "XLY",
+  JPM: "XLF",
+  BAC: "XLF",
+  WFC: "XLF",
+  GS: "XLF",
+  XOM: "XLE",
+  CVX: "XLE",
+  LLY: "XLV",
+  UNH: "XLV",
+  COST: "XLP",
+  WMT: "XLP",
+  COIN: "XLF",
+};
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new DatabaseSync(DB_PATH);
@@ -108,6 +146,14 @@ db.exec(`
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(payload));
+}
+
+function sendCsv(res, statusCode, filename, content) {
+  res.writeHead(statusCode, {
+    "Content-Type": "text/csv; charset=utf-8",
+    "Content-Disposition": `attachment; filename="${filename}"`,
+  });
+  res.end(content);
 }
 
 function safeSymbol(rawSymbol) {
@@ -554,11 +600,33 @@ function buildFlowSnapshot(symbol, history) {
   };
 }
 
-function buildTechnicalRecommendation(symbol, history) {
-  const closes = history.points.map((point) => point.close).filter((value) => value != null);
-  const volumes = history.points.map((point) => point.volume || 0);
-  const latest = history.points[history.points.length - 1];
-  const previous = history.points[history.points.length - 2] || latest;
+function computeAtr(points, period = 14) {
+  if (!points.length || points.length <= period) {
+    return null;
+  }
+
+  const trueRanges = [];
+  for (let index = 1; index < points.length; index += 1) {
+    const current = points[index];
+    const previous = points[index - 1];
+    const intradayRange = Math.abs((current.high ?? current.close) - (current.low ?? current.close));
+    const highToPrevClose = Math.abs((current.high ?? current.close) - previous.close);
+    const lowToPrevClose = Math.abs((current.low ?? current.close) - previous.close);
+    trueRanges.push(Math.max(intradayRange, highToPrevClose, lowToPrevClose));
+  }
+
+  if (trueRanges.length < period) {
+    return null;
+  }
+
+  return average(trueRanges.slice(-period));
+}
+
+function evaluateTechnicalCore(points) {
+  const closes = points.map((point) => point.close).filter((value) => value != null);
+  const volumes = points.map((point) => point.volume || 0);
+  const latest = points[points.length - 1];
+  const previous = points[points.length - 2] || latest;
   const latestClose = latest.close;
   const sma20 = sma(closes, 20);
   const sma50 = sma(closes, 50);
@@ -577,93 +645,356 @@ function buildTechnicalRecommendation(symbol, history) {
   const priceChange = previous.close ? ((latestClose - previous.close) / previous.close) * 100 : null;
   const scoreNotes = [];
   let score = 0;
+  let bullishVotes = 0;
+  let bearishVotes = 0;
 
   if (sma20 != null && latestClose > sma20) {
     score += 1;
+    bullishVotes += 1;
     scoreNotes.push(`Price is above the 20-day average by ${formatPercent(((latestClose - sma20) / sma20) * 100)}.`);
   } else if (sma20 != null) {
     score -= 1;
+    bearishVotes += 1;
     scoreNotes.push(`Price is below the 20-day average by ${formatPercent(((latestClose - sma20) / sma20) * 100)}.`);
   }
 
   if (sma50 != null && sma20 != null && sma20 > sma50) {
     score += 1;
+    bullishVotes += 1;
     scoreNotes.push("Short-term trend is stronger than the 50-day trend.");
   } else if (sma50 != null && sma20 != null) {
     score -= 1;
+    bearishVotes += 1;
     scoreNotes.push("Short-term trend is lagging the 50-day trend.");
   }
 
   if (sma200 != null && latestClose > sma200) {
     score += 1;
+    bullishVotes += 1;
     scoreNotes.push("Price is trading above the long-term 200-day trend.");
   } else if (sma200 != null) {
     score -= 1;
+    bearishVotes += 1;
     scoreNotes.push("Price is under the long-term 200-day trend.");
   }
 
   if (rsi14 != null && rsi14 >= 52 && rsi14 <= 68) {
     score += 1;
+    bullishVotes += 1;
     scoreNotes.push(`RSI is constructive at ${rsi14.toFixed(1)}.`);
   } else if (rsi14 != null && rsi14 >= 75) {
     score -= 1;
+    bearishVotes += 1;
     scoreNotes.push(`RSI is stretched at ${rsi14.toFixed(1)}.`);
   } else if (rsi14 != null && rsi14 <= 38) {
     score -= 1;
+    bearishVotes += 1;
     scoreNotes.push(`RSI remains weak at ${rsi14.toFixed(1)}.`);
   }
 
   if (macd.histogram != null && macd.histogram > 0) {
     score += 1;
+    bullishVotes += 1;
     scoreNotes.push("MACD momentum remains positive.");
   } else if (macd.histogram != null && macd.histogram < 0) {
     score -= 1;
+    bearishVotes += 1;
     scoreNotes.push("MACD momentum is negative.");
   }
 
   if (latestClose >= recentHigh) {
     score += 1;
+    bullishVotes += 1;
     scoreNotes.push("Price is pressing a 20-session breakout zone.");
   } else if (latestClose <= recentLow) {
     score -= 1;
+    bearishVotes += 1;
     scoreNotes.push("Price is testing a 20-session breakdown zone.");
   }
 
   if (avgVolume20 != null && latest.volume != null && latest.volume > avgVolume20 * 1.35) {
     if ((priceChange || 0) >= 0) {
       score += 1;
+      bullishVotes += 1;
       scoreNotes.push("Volume expanded on an up move, which supports demand.");
     } else {
       score -= 1;
+      bearishVotes += 1;
       scoreNotes.push("Volume expanded on a down move, which points to distribution.");
     }
   }
 
   if (monthReturn != null && monthReturn >= 6) {
     score += 1;
+    bullishVotes += 1;
     scoreNotes.push(`One-month return is strong at ${formatPercent(monthReturn)}.`);
   } else if (monthReturn != null && monthReturn <= -6) {
     score -= 1;
+    bearishVotes += 1;
     scoreNotes.push(`One-month return is weak at ${formatPercent(monthReturn)}.`);
   }
 
   if (bollingerUpper != null && latestClose > bollingerUpper) {
     score -= 1;
+    bearishVotes += 1;
     scoreNotes.push("Price is above the upper Bollinger band and may be overextended.");
   } else if (bollingerLower != null && latestClose < bollingerLower) {
     score += 1;
+    bullishVotes += 1;
     scoreNotes.push("Price is below the lower Bollinger band and may be washout-level oversold.");
   }
 
+  return {
+    score,
+    bullishVotes,
+    bearishVotes,
+    scoreNotes,
+    latest,
+    previous,
+    latestClose,
+    sma20,
+    sma50,
+    sma200,
+    rsi14,
+    macd,
+    avgVolume20,
+    monthReturn,
+    recentHigh,
+    recentLow,
+    bollingerUpper,
+    bollingerLower,
+    priceChange,
+    atr14: computeAtr(points, 14),
+  };
+}
+
+function calibrateTechnicalSignal(points, targetCoreScore) {
+  const samples = [];
+  const minLookback = 120;
+  const forward5d = 5;
+  const forward20d = 20;
+
+  for (let index = minLookback; index <= points.length - 1 - forward20d; index += 1) {
+    const window = points.slice(0, index + 1);
+    const state = evaluateTechnicalCore(window);
+    if (Math.abs(state.score - targetCoreScore) > 2) {
+      continue;
+    }
+
+    const currentClose = points[index].close;
+    const close5d = points[index + forward5d]?.close;
+    const close20d = points[index + forward20d]?.close;
+    if (currentClose == null || close5d == null || close20d == null) {
+      continue;
+    }
+
+    samples.push({
+      return5d: ((close5d - currentClose) / currentClose) * 100,
+      return20d: ((close20d - currentClose) / currentClose) * 100,
+    });
+  }
+
+  if (samples.length < 5) {
+    return null;
+  }
+
+  const positive5d = samples.filter((sample) => sample.return5d > 0).length;
+  const positive20d = samples.filter((sample) => sample.return20d > 0).length;
+  return {
+    sampleSize: samples.length,
+    probPositive5d: positive5d / samples.length,
+    probPositive20d: positive20d / samples.length,
+    avgForward5d: average(samples.map((sample) => sample.return5d)),
+    avgForward20d: average(samples.map((sample) => sample.return20d)),
+  };
+}
+
+function getBenchmarkSymbolForStock(symbol) {
+  return SECTOR_BENCHMARKS[symbol] || BENCHMARKS.growth;
+}
+
+function calculateRelativeStrength(assetReturn, benchmarkReturn) {
+  if (assetReturn == null || benchmarkReturn == null) {
+    return null;
+  }
+
+  return assetReturn - benchmarkReturn;
+}
+
+function classifyMarketRegime(benchmarks) {
+  const broad = benchmarks[BENCHMARKS.broad];
+  const growth = benchmarks[BENCHMARKS.growth];
+  if (!broad || !growth) {
+    return "mixed";
+  }
+
+  let bullishVotes = 0;
+  let bearishVotes = 0;
+
+  [broad, growth].forEach((snapshot) => {
+    if (snapshot.sma20 != null && snapshot.latestClose > snapshot.sma20) {
+      bullishVotes += 1;
+    } else {
+      bearishVotes += 1;
+    }
+
+    if (snapshot.sma50 != null && snapshot.latestClose > snapshot.sma50) {
+      bullishVotes += 1;
+    } else {
+      bearishVotes += 1;
+    }
+
+    if ((snapshot.return20dPct || 0) >= 0) {
+      bullishVotes += 1;
+    } else {
+      bearishVotes += 1;
+    }
+  });
+
+  if (bullishVotes - bearishVotes >= 2) {
+    return "risk_on";
+  }
+
+  if (bearishVotes - bullishVotes >= 2) {
+    return "risk_off";
+  }
+
+  return "mixed";
+}
+
+async function fetchBenchmarkContext(symbols, range = "1y") {
+  const benchmarkSymbols = new Set([BENCHMARKS.broad, BENCHMARKS.growth]);
+  symbols.forEach((symbol) => benchmarkSymbols.add(getBenchmarkSymbolForStock(symbol)));
+
+  const settled = await Promise.allSettled(
+    [...benchmarkSymbols].map(async (symbol) => {
+      const history = await fetchHistory(symbol, range);
+      return [symbol, buildFlowSnapshot(symbol, history)];
+    })
+  );
+
+  const entries = settled
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => result.value);
+  const benchmarks = Object.fromEntries(entries);
+  return {
+    benchmarks,
+    regime: classifyMarketRegime(benchmarks),
+  };
+}
+
+function buildTechnicalRecommendation(symbol, history, marketContext = null, options = {}) {
+  const snapshot = buildFlowSnapshot(symbol, history);
+  const core = evaluateTechnicalCore(history.points);
+  const latest = core.latest;
+  const latestClose = core.latestClose;
+  const sma20 = core.sma20;
+  const sma50 = core.sma50;
+  const sma200 = core.sma200;
+  const rsi14 = core.rsi14;
+  const macd = core.macd;
+  const avgVolume20 = core.avgVolume20;
+  const monthReturn = core.monthReturn;
+  const recentHigh = core.recentHigh;
+  const recentLow = core.recentLow;
+  const bollingerUpper = core.bollingerUpper;
+  const bollingerLower = core.bollingerLower;
+  const priceChange = core.priceChange;
+  const benchmarkSymbol = getBenchmarkSymbolForStock(symbol);
+  const broadBenchmark = marketContext?.benchmarks?.[BENCHMARKS.broad] || null;
+  const sectorBenchmark = marketContext?.benchmarks?.[benchmarkSymbol] || null;
+  const relativeStrengthBroad20 = calculateRelativeStrength(snapshot.return20dPct, broadBenchmark?.return20dPct);
+  const relativeStrengthSector20 = calculateRelativeStrength(snapshot.return20dPct, sectorBenchmark?.return20dPct);
+  const relativeStrengthBroad60 = calculateRelativeStrength(snapshot.return60dPct, broadBenchmark?.return60dPct);
+  const regime = marketContext?.regime || "mixed";
+  const scoreNotes = [...core.scoreNotes];
+  let score = core.score;
+  let bullishVotes = core.bullishVotes;
+  let bearishVotes = core.bearishVotes;
+
+  if (relativeStrengthBroad20 != null && relativeStrengthBroad20 >= 3) {
+    score += 1;
+    bullishVotes += 1;
+    scoreNotes.push(`Relative strength versus ${BENCHMARKS.broad} is positive by ${formatPercent(relativeStrengthBroad20)} over 20 sessions.`);
+  } else if (relativeStrengthBroad20 != null && relativeStrengthBroad20 <= -3) {
+    score -= 1;
+    bearishVotes += 1;
+    scoreNotes.push(`Relative strength versus ${BENCHMARKS.broad} is weak by ${formatPercent(relativeStrengthBroad20)} over 20 sessions.`);
+  }
+
+  if (relativeStrengthSector20 != null && relativeStrengthSector20 >= 2) {
+    score += 1;
+    bullishVotes += 1;
+    scoreNotes.push(`The stock is outperforming ${benchmarkSymbol} by ${formatPercent(relativeStrengthSector20)} over 20 sessions.`);
+  } else if (relativeStrengthSector20 != null && relativeStrengthSector20 <= -2) {
+    score -= 1;
+    bearishVotes += 1;
+    scoreNotes.push(`The stock is lagging ${benchmarkSymbol} by ${formatPercent(relativeStrengthSector20)} over 20 sessions.`);
+  }
+
+  if (regime === "risk_on") {
+    scoreNotes.push("Market regime is risk-on.");
+    if (score > 0) {
+      score += 1;
+    } else if (score < 0) {
+      score -= 1;
+    }
+  } else if (regime === "risk_off") {
+    scoreNotes.push("Market regime is risk-off.");
+    if (score > 0) {
+      score -= 1;
+    } else if (score < 0) {
+      score += 1;
+    }
+  } else {
+    scoreNotes.push("Market regime is mixed.");
+  }
+
   let recommendation = "Hold";
-  if (score >= 5) {
+  if (score >= 6) {
     recommendation = "Strong Buy";
-  } else if (score >= 2) {
+  } else if (score >= 3) {
     recommendation = "Buy";
-  } else if (score <= -5) {
+  } else if (score <= -6) {
     recommendation = "Strong Sell";
-  } else if (score <= -2) {
+  } else if (score <= -3) {
     recommendation = "Sell";
+  }
+
+  const mixedSignal = bullishVotes >= 3 && bearishVotes >= 3 && Math.abs(bullishVotes - bearishVotes) <= 1;
+  const weakEdge = Math.abs(score) <= 2;
+  const longBlockedByRegime =
+    recommendation.includes("Buy") &&
+    regime === "risk_off" &&
+    (relativeStrengthBroad20 == null || relativeStrengthBroad20 < 5);
+  const shortBlockedByRegime =
+    recommendation.includes("Sell") &&
+    regime === "risk_on" &&
+    (relativeStrengthBroad20 == null || relativeStrengthBroad20 > -5);
+
+  if (mixedSignal || weakEdge) {
+    recommendation = "No Trade";
+  } else if (longBlockedByRegime || shortBlockedByRegime) {
+    recommendation = "Watch";
+  }
+
+  const calibration = options.skipCalibration ? null : calibrateTechnicalSignal(history.points, core.score);
+  if (calibration) {
+    scoreNotes.push(
+      `Historical matches: ${calibration.sampleSize}, 5D hit rate ${(calibration.probPositive5d * 100).toFixed(0)}%, avg 20D return ${formatPercent(calibration.avgForward20d)}.`
+    );
+
+    if (
+      recommendation.includes("Buy") &&
+      (calibration.probPositive20d < 0.55 || (calibration.avgForward20d != null && calibration.avgForward20d < 1))
+    ) {
+      recommendation = "Watch";
+    } else if (
+      recommendation.includes("Sell") &&
+      (calibration.probPositive20d > 0.45 || (calibration.avgForward20d != null && calibration.avgForward20d > -1))
+    ) {
+      recommendation = "Watch";
+    }
   }
 
   return {
@@ -671,8 +1002,15 @@ function buildTechnicalRecommendation(symbol, history) {
     shortName: history.shortName || symbol,
     recommendation,
     score,
-    confidence: Math.abs(score) >= 5 ? "High" : Math.abs(score) >= 3 ? "Medium" : "Low",
-    summary: scoreNotes.slice(0, 4),
+    confidence:
+      recommendation === "No Trade"
+        ? "Low"
+        : Math.abs(score) >= 6 && !mixedSignal
+          ? "High"
+          : Math.abs(score) >= 4
+            ? "Medium"
+            : "Low",
+    summary: scoreNotes.slice(0, 5),
     metrics: {
       price: latestClose,
       oneDayChangePct: priceChange,
@@ -684,14 +1022,236 @@ function buildTechnicalRecommendation(symbol, history) {
       avgVolume20,
       latestVolume: latest.volume ?? null,
       macdHistogram: macd.histogram,
+      relativeStrengthBroad20,
+      relativeStrengthSector20,
+      relativeStrengthBroad60,
+      marketRegime: regime,
+      benchmarkSymbol,
+      bullishVotes,
+      bearishVotes,
+      atr14: core.atr14,
+      stopDistancePct: core.atr14 != null && latestClose ? (core.atr14 * 1.5 * 100) / latestClose : null,
+      targetDistancePct: core.atr14 != null && latestClose ? (core.atr14 * 3 * 100) / latestClose : null,
+      hitRate5d: calibration?.probPositive5d ?? null,
+      hitRate20d: calibration?.probPositive20d ?? null,
+      expectedReturn5d: calibration?.avgForward5d ?? null,
+      expectedReturn20d: calibration?.avgForward20d ?? null,
+      calibrationSamples: calibration?.sampleSize ?? 0,
     },
   };
 }
 
-function buildMarketFlowRecommendation(symbol, history) {
+function getPointsUpToDate(points, targetDate) {
+  return points.filter((point) => point.date <= targetDate);
+}
+
+function getDirectionFromRecommendation(recommendation) {
+  if (recommendation.includes("Buy")) {
+    return "long";
+  }
+
+  if (recommendation.includes("Sell")) {
+    return "short";
+  }
+
+  return "flat";
+}
+
+function getDirectionSign(direction) {
+  if (direction === "long") {
+    return 1;
+  }
+
+  if (direction === "short") {
+    return -1;
+  }
+
+  return 0;
+}
+
+function getForwardReturnFromHistory(history, entryDate, forwardDays) {
+  const entryIndex = history.points.findIndex((point) => point.date === entryDate);
+  if (entryIndex < 0) {
+    return null;
+  }
+
+  const currentClose = history.points[entryIndex]?.close;
+  const forwardClose = history.points[entryIndex + forwardDays]?.close;
+  if (currentClose == null || forwardClose == null) {
+    return null;
+  }
+
+  return ((forwardClose - currentClose) / currentClose) * 100;
+}
+
+function buildMarketContextForDate(symbol, benchmarkHistories, targetDate) {
+  const benchmarkSymbols = [BENCHMARKS.broad, BENCHMARKS.growth, getBenchmarkSymbolForStock(symbol)];
+  const entries = benchmarkSymbols
+    .map((benchmarkSymbol) => {
+      const history = benchmarkHistories[benchmarkSymbol];
+      if (!history) {
+        return null;
+      }
+
+      const slicedPoints = getPointsUpToDate(history.points, targetDate);
+      if (slicedPoints.length < 60) {
+        return null;
+      }
+
+      return [benchmarkSymbol, buildFlowSnapshot(benchmarkSymbol, { ...history, points: slicedPoints })];
+    })
+    .filter(Boolean);
+
+  const benchmarks = Object.fromEntries(entries);
+  return {
+    benchmarks,
+    regime: classifyMarketRegime(benchmarks),
+  };
+}
+
+function aggregateBacktestRecords(records) {
+  if (!records.length) {
+    return null;
+  }
+
+  const positive5d = records.filter((record) => (record.strategyNet5d ?? 0) > 0).length;
+  const positive20d = records.filter((record) => (record.strategyNet20d ?? 0) > 0).length;
+  const positiveAlpha20d = records.filter((record) => (record.alphaNet20d ?? 0) > 0).length;
+  return {
+    totalSignals: records.length,
+    hitRate5d: positive5d / records.length,
+    hitRate20d: positive20d / records.length,
+    alphaHitRate20d: positiveAlpha20d / records.length,
+    avgReturn5d: average(records.map((record) => record.assetReturn5d)),
+    avgReturn20d: average(records.map((record) => record.assetReturn20d)),
+    avgBenchmark20d: average(records.map((record) => record.benchmarkReturn20d)),
+    avgAlpha20d: average(records.map((record) => record.alphaGross20d)),
+    avgNet20d: average(records.map((record) => record.strategyNet20d)),
+    avgAlphaNet20d: average(records.map((record) => record.alphaNet20d)),
+  };
+}
+
+function backtestTechnicalHistory(symbol, history, benchmarkHistories) {
+  const recommendationBuckets = {
+    "Strong Buy": [],
+    Buy: [],
+    Watch: [],
+    "No Trade": [],
+    Sell: [],
+    "Strong Sell": [],
+  };
+  const overall = [];
+  const directionalBuckets = {
+    long: [],
+    short: [],
+    flat: [],
+  };
+  const minLookback = 220;
+  const forward5d = 5;
+  const forward20d = 20;
+  let previousDirection = "flat";
+
+  for (let index = minLookback; index <= history.points.length - 1 - forward20d; index += 1) {
+    const slicedPoints = history.points.slice(0, index + 1);
+    const currentPoint = history.points[index];
+    const assetReturn5d = getForwardReturnFromHistory(history, currentPoint.date, forward5d);
+    const assetReturn20d = getForwardReturnFromHistory(history, currentPoint.date, forward20d);
+    if (currentPoint?.close == null || assetReturn5d == null || assetReturn20d == null) {
+      continue;
+    }
+
+    const context = buildMarketContextForDate(symbol, benchmarkHistories, currentPoint.date);
+    const recommendation = buildTechnicalRecommendation(
+      symbol,
+      { ...history, points: slicedPoints },
+      context,
+      { skipCalibration: true }
+    );
+    const direction = getDirectionFromRecommendation(recommendation.recommendation);
+    const directionSign = getDirectionSign(direction);
+    const benchmarkSymbol = recommendation.metrics.benchmarkSymbol || getBenchmarkSymbolForStock(symbol);
+    const benchmarkHistory = benchmarkHistories[benchmarkSymbol];
+    const benchmarkReturn5d = benchmarkHistory
+      ? getForwardReturnFromHistory(benchmarkHistory, currentPoint.date, forward5d)
+      : null;
+    const benchmarkReturn20d = benchmarkHistory
+      ? getForwardReturnFromHistory(benchmarkHistory, currentPoint.date, forward20d)
+      : null;
+    const transactionCostPct =
+      direction === "flat"
+        ? 0
+        : previousDirection === "flat" || previousDirection !== direction
+          ? BACKTEST_TRANSACTION_COST_PCT
+          : BACKTEST_TRANSACTION_COST_PCT / 2;
+    const strategyGross5d = directionSign * assetReturn5d;
+    const strategyGross20d = directionSign * assetReturn20d;
+    const alphaGross5d =
+      benchmarkReturn5d == null ? null : directionSign * (assetReturn5d - benchmarkReturn5d);
+    const alphaGross20d =
+      benchmarkReturn20d == null ? null : directionSign * (assetReturn20d - benchmarkReturn20d);
+
+    const record = {
+      asOfDate: currentPoint.date,
+      recommendation: recommendation.recommendation,
+      direction,
+      score: recommendation.score,
+      regime: recommendation.metrics.marketRegime,
+      assetReturn5d,
+      assetReturn20d,
+      benchmarkSymbol,
+      benchmarkReturn5d,
+      benchmarkReturn20d,
+      strategyGross5d,
+      strategyGross20d,
+      strategyNet5d: strategyGross5d - transactionCostPct,
+      strategyNet20d: strategyGross20d - transactionCostPct,
+      alphaGross5d,
+      alphaGross20d,
+      alphaNet5d: alphaGross5d == null ? null : alphaGross5d - transactionCostPct,
+      alphaNet20d: alphaGross20d == null ? null : alphaGross20d - transactionCostPct,
+      transactionCostPct,
+    };
+
+    overall.push(record);
+    if (recommendationBuckets[record.recommendation]) {
+      recommendationBuckets[record.recommendation].push(record);
+    }
+    directionalBuckets[direction].push(record);
+    previousDirection = direction;
+  }
+
+  const bucketSummary = Object.fromEntries(
+    Object.entries(recommendationBuckets)
+      .map(([key, records]) => [key, aggregateBacktestRecords(records)])
+      .filter(([, value]) => value)
+  );
+  const directionalSummary = Object.fromEntries(
+    Object.entries(directionalBuckets)
+      .map(([key, records]) => [key, aggregateBacktestRecords(records)])
+      .filter(([, value]) => value)
+  );
+
+  return {
+    symbol,
+    shortName: history.shortName || symbol,
+    totalWindows: overall.length,
+    overall: aggregateBacktestRecords(overall),
+    byRecommendation: bucketSummary,
+    byDirection: directionalSummary,
+    records: overall,
+  };
+}
+
+function buildMarketFlowRecommendation(symbol, history, marketContext = null) {
   const snapshot = buildFlowSnapshot(symbol, history);
   const summary = [];
   let score = 0;
+  const regime = marketContext?.regime || "mixed";
+  const broadBenchmark = marketContext?.benchmarks?.[BENCHMARKS.broad] || null;
+  const benchmarkSymbol = getBenchmarkSymbolForStock(symbol);
+  const sectorBenchmark = marketContext?.benchmarks?.[benchmarkSymbol] || null;
+  const relativeStrengthBroad20 = calculateRelativeStrength(snapshot.return20dPct, broadBenchmark?.return20dPct);
+  const relativeStrengthSector20 = calculateRelativeStrength(snapshot.return20dPct, sectorBenchmark?.return20dPct);
 
   if (snapshot.volumeRatio20 != null && snapshot.volumeRatio20 >= 1.8) {
     if ((snapshot.return5dPct || 0) >= 0) {
@@ -746,6 +1306,20 @@ function buildMarketFlowRecommendation(symbol, history) {
     summary.push(`RSI remains weak at ${snapshot.rsi14.toFixed(1)}.`);
   }
 
+  if (relativeStrengthBroad20 != null && relativeStrengthBroad20 >= 3) {
+    score += 1;
+    summary.push(`Relative strength versus ${BENCHMARKS.broad} is positive by ${formatPercent(relativeStrengthBroad20)}.`);
+  } else if (relativeStrengthBroad20 != null && relativeStrengthBroad20 <= -3) {
+    score -= 1;
+    summary.push(`Relative strength versus ${BENCHMARKS.broad} is weak by ${formatPercent(relativeStrengthBroad20)}.`);
+  }
+
+  if (relativeStrengthSector20 != null && relativeStrengthSector20 >= 2) {
+    score += 1;
+  } else if (relativeStrengthSector20 != null && relativeStrengthSector20 <= -2) {
+    score -= 1;
+  }
+
   let recommendation = "Balanced Flow";
   if (score >= 6) {
     recommendation = "Heavy Accumulation";
@@ -755,6 +1329,14 @@ function buildMarketFlowRecommendation(symbol, history) {
     recommendation = "Heavy Distribution";
   } else if (score <= -3) {
     recommendation = "Sell Pressure";
+  }
+
+  if (Math.abs(score) <= 2) {
+    recommendation = "Balanced Flow";
+  } else if (recommendation.includes("Buy") && regime === "risk_off" && (relativeStrengthBroad20 || 0) < 5) {
+    recommendation = "Watch Flow";
+  } else if (recommendation.includes("Sell") && regime === "risk_on" && (relativeStrengthBroad20 || 0) > -5) {
+    recommendation = "Watch Flow";
   }
 
   return {
@@ -773,6 +1355,9 @@ function buildMarketFlowRecommendation(symbol, history) {
       return5dPct: snapshot.return5dPct,
       return20dPct: snapshot.return20dPct,
       rsi14: snapshot.rsi14,
+      relativeStrengthBroad20,
+      relativeStrengthSector20,
+      marketRegime: regime,
     },
   };
 }
@@ -904,8 +1489,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
+      const marketContext = await fetchBenchmarkContext(symbols, "1y");
       const recommendations = await Promise.all(
-        symbols.map(async (symbol) => buildTechnicalRecommendation(symbol, await fetchHistory(symbol, "1y")))
+        symbols.map(async (symbol) =>
+          buildTechnicalRecommendation(symbol, await fetchHistory(symbol, "1y"), marketContext)
+        )
       );
       sendJson(res, 200, { recommendations });
     } catch (error) {
@@ -914,10 +1502,168 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (requestUrl.pathname === "/api/backtest/technical" && req.method === "GET") {
+    const symbols = listStoredSymbols();
+    if (!symbols.length) {
+      if (requestUrl.searchParams.get("format") === "csv") {
+        sendCsv(res, 200, "technical-backtest.csv", "symbol\n");
+        return;
+      }
+      sendJson(res, 200, { summary: [], directionSummary: [], symbols: [] });
+      return;
+    }
+
+    try {
+      const benchmarkSymbols = new Set([BENCHMARKS.broad, BENCHMARKS.growth]);
+      symbols.forEach((symbol) => benchmarkSymbols.add(getBenchmarkSymbolForStock(symbol)));
+
+      const benchmarkEntries = await Promise.all(
+        [...benchmarkSymbols].map(async (symbol) => [symbol, await fetchHistory(symbol, BACKTEST_LOOKBACK_RANGE)])
+      );
+      const benchmarkHistories = Object.fromEntries(benchmarkEntries);
+
+      const symbolEntries = await Promise.all(
+        symbols.map(async (symbol) => [symbol, await fetchHistory(symbol, BACKTEST_LOOKBACK_RANGE)])
+      );
+      const symbolHistories = Object.fromEntries(symbolEntries);
+
+      const backtests = symbols.map((symbol) =>
+        backtestTechnicalHistory(symbol, symbolHistories[symbol], benchmarkHistories)
+      );
+
+      const mergedBuckets = new Map();
+      backtests.forEach((entry) => {
+        Object.entries(entry.byRecommendation || {}).forEach(([label, stats]) => {
+          if (!mergedBuckets.has(label)) {
+            mergedBuckets.set(label, []);
+          }
+
+          mergedBuckets.get(label).push(stats);
+        });
+      });
+
+      const summary = [...mergedBuckets.entries()].map(([label, statsList]) => ({
+        recommendation: label,
+        totalSignals: statsList.reduce((sum, stats) => sum + stats.totalSignals, 0),
+        hitRate5d:
+          statsList.reduce((sum, stats) => sum + stats.hitRate5d * stats.totalSignals, 0) /
+          statsList.reduce((sum, stats) => sum + stats.totalSignals, 0),
+        hitRate20d:
+          statsList.reduce((sum, stats) => sum + stats.hitRate20d * stats.totalSignals, 0) /
+          statsList.reduce((sum, stats) => sum + stats.totalSignals, 0),
+        alphaHitRate20d:
+          statsList.reduce((sum, stats) => sum + (stats.alphaHitRate20d || 0) * stats.totalSignals, 0) /
+          statsList.reduce((sum, stats) => sum + stats.totalSignals, 0),
+        avgReturn5d:
+          statsList.reduce((sum, stats) => sum + stats.avgReturn5d * stats.totalSignals, 0) /
+          statsList.reduce((sum, stats) => sum + stats.totalSignals, 0),
+        avgReturn20d:
+          statsList.reduce((sum, stats) => sum + stats.avgReturn20d * stats.totalSignals, 0) /
+          statsList.reduce((sum, stats) => sum + stats.totalSignals, 0),
+        avgAlpha20d:
+          statsList.reduce((sum, stats) => sum + (stats.avgAlpha20d || 0) * stats.totalSignals, 0) /
+          statsList.reduce((sum, stats) => sum + stats.totalSignals, 0),
+        avgNet20d:
+          statsList.reduce((sum, stats) => sum + (stats.avgNet20d || 0) * stats.totalSignals, 0) /
+          statsList.reduce((sum, stats) => sum + stats.totalSignals, 0),
+        avgAlphaNet20d:
+          statsList.reduce((sum, stats) => sum + (stats.avgAlphaNet20d || 0) * stats.totalSignals, 0) /
+          statsList.reduce((sum, stats) => sum + stats.totalSignals, 0),
+      }));
+
+      const mergedDirections = new Map();
+      backtests.forEach((entry) => {
+        Object.entries(entry.byDirection || {}).forEach(([label, stats]) => {
+          if (!mergedDirections.has(label)) {
+            mergedDirections.set(label, []);
+          }
+
+          mergedDirections.get(label).push(stats);
+        });
+      });
+
+      const directionSummary = [...mergedDirections.entries()].map(([label, statsList]) => ({
+        direction: label,
+        totalSignals: statsList.reduce((sum, stats) => sum + stats.totalSignals, 0),
+        hitRate20d:
+          statsList.reduce((sum, stats) => sum + stats.hitRate20d * stats.totalSignals, 0) /
+          statsList.reduce((sum, stats) => sum + stats.totalSignals, 0),
+        alphaHitRate20d:
+          statsList.reduce((sum, stats) => sum + (stats.alphaHitRate20d || 0) * stats.totalSignals, 0) /
+          statsList.reduce((sum, stats) => sum + stats.totalSignals, 0),
+        avgNet20d:
+          statsList.reduce((sum, stats) => sum + (stats.avgNet20d || 0) * stats.totalSignals, 0) /
+          statsList.reduce((sum, stats) => sum + stats.totalSignals, 0),
+        avgAlphaNet20d:
+          statsList.reduce((sum, stats) => sum + (stats.avgAlphaNet20d || 0) * stats.totalSignals, 0) /
+          statsList.reduce((sum, stats) => sum + stats.totalSignals, 0),
+      }));
+
+      if (requestUrl.searchParams.get("format") === "csv") {
+        const rows = [
+          [
+            "symbol",
+            "as_of_date",
+            "recommendation",
+            "direction",
+            "score",
+            "regime",
+            "benchmark_symbol",
+            "asset_return_5d",
+            "asset_return_20d",
+            "benchmark_return_5d",
+            "benchmark_return_20d",
+            "strategy_net_5d",
+            "strategy_net_20d",
+            "alpha_net_5d",
+            "alpha_net_20d",
+            "transaction_cost_pct",
+          ].join(","),
+        ];
+
+        backtests.forEach((entry) => {
+          entry.records.forEach((record) => {
+            rows.push(
+              [
+                entry.symbol,
+                record.asOfDate,
+                record.recommendation,
+                record.direction,
+                record.score,
+                record.regime,
+                record.benchmarkSymbol,
+                record.assetReturn5d,
+                record.assetReturn20d,
+                record.benchmarkReturn5d,
+                record.benchmarkReturn20d,
+                record.strategyNet5d,
+                record.strategyNet20d,
+                record.alphaNet5d,
+                record.alphaNet20d,
+                record.transactionCostPct,
+              ].join(",")
+            );
+          });
+        });
+
+        sendCsv(res, 200, "technical-backtest.csv", rows.join("\n"));
+        return;
+      }
+
+      sendJson(res, 200, { summary, directionSummary, symbols: backtests });
+    } catch (error) {
+      sendJson(res, 502, { error: error.message });
+    }
+    return;
+  }
+
   if (requestUrl.pathname === "/api/recommendations/institutional" && req.method === "GET") {
     try {
+      const marketContext = await fetchBenchmarkContext(MARKET_FLOW_UNIVERSE, "1y");
       const recommendations = await Promise.all(
-        MARKET_FLOW_UNIVERSE.map(async (symbol) => buildMarketFlowRecommendation(symbol, await fetchHistory(symbol, "3mo")))
+        MARKET_FLOW_UNIVERSE.map(async (symbol) =>
+          buildMarketFlowRecommendation(symbol, await fetchHistory(symbol, "3mo"), marketContext)
+        )
       );
       sendJson(res, 200, { recommendations: recommendations.sort((left, right) => right.score - left.score).slice(0, 12) });
     } catch (error) {
