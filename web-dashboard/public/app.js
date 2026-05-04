@@ -19,6 +19,7 @@ const rangePresets = [
   { key: "max", label: "Max" },
 ];
 const defaultRange = "1d";
+const autoRefreshMs = 10000;
 
 const cards = new Map();
 const globalRangeButtons = new Map();
@@ -26,6 +27,7 @@ let currentGlobalRange = loadRange();
 let draggingSymbol = null;
 let searchDebounceTimer = null;
 let currentSearchResults = [];
+let autoRefreshTimer = null;
 
 function setStatus(message) {
   statusEl.textContent = message || "";
@@ -357,6 +359,18 @@ function getCurrentCardOrder() {
   return Array.from(cardsContainer.querySelectorAll(".quote-card")).map((card) => card.dataset.symbol);
 }
 
+function startAutoRefresh() {
+  if (autoRefreshTimer) {
+    clearInterval(autoRefreshTimer);
+  }
+
+  autoRefreshTimer = window.setInterval(() => {
+    cards.forEach(({ refresh }) => {
+      refresh({ background: true });
+    });
+  }, autoRefreshMs);
+}
+
 async function persistCardOrder() {
   const symbols = getCurrentCardOrder();
   await apiRequest("/api/symbols/order", {
@@ -379,7 +393,6 @@ function makeCard(symbol) {
   const rangeTabsEl = fragment.querySelector(".range-tabs");
   const rangeLabelEl = fragment.querySelector(".range-label");
   const errorEl = fragment.querySelector(".error-message");
-  const refreshButton = fragment.querySelector(".refresh-button");
   const removeButton = fragment.querySelector(".remove-button");
   const canvas = fragment.querySelector(".chart");
   const sideLabelsEl = fragment.querySelector(".chart-side-labels");
@@ -397,6 +410,7 @@ function makeCard(symbol) {
   const localRangeButtons = new Map();
   let currentPayload = null;
   let currentRange = currentGlobalRange;
+  let isRefreshing = false;
 
   cardEl.dataset.symbol = symbol;
   cardEl.draggable = true;
@@ -424,10 +438,16 @@ function makeCard(symbol) {
     metricPointsEl.textContent = "0";
   }
 
-  async function refresh() {
-    refreshButton.disabled = true;
+  async function refresh(options = {}) {
+    if (isRefreshing) {
+      return;
+    }
+
+    isRefreshing = true;
     errorEl.textContent = "";
-    rangeLabelEl.textContent = `Refreshing ${getRangeLabel(currentRange)}`;
+    if (!options.background) {
+      rangeLabelEl.textContent = `Refreshing ${getRangeLabel(currentRange)}`;
+    }
 
     try {
       const payload = await apiRequest(
@@ -474,7 +494,7 @@ function makeCard(symbol) {
       resetMetrics();
       canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
     } finally {
-      refreshButton.disabled = false;
+      isRefreshing = false;
       updateLocalRangeButtons();
     }
   }
@@ -501,7 +521,6 @@ function makeCard(symbol) {
   });
   updateLocalRangeButtons();
 
-  refreshButton.addEventListener("click", refresh);
   removeButton.addEventListener("click", async () => {
     try {
       await apiRequest(`/api/symbols/${encodeURIComponent(symbol)}`, { method: "DELETE" });
@@ -647,6 +666,7 @@ window.addEventListener("resize", () => {
 
 async function init() {
   initGlobalRangeTabs();
+  startAutoRefresh();
 
   try {
     const payload = await apiRequest("/api/symbols");
