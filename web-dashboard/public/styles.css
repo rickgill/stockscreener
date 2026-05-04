@@ -88,6 +88,7 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 18px;
   background: #fafbfd;
+  position: relative;
 }
 
 .field-label,
@@ -103,6 +104,51 @@ h1 {
 .field-row {
   display: flex;
   gap: 12px;
+}
+
+.symbol-search-results {
+  display: none;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+  box-shadow: 0 10px 30px rgba(32, 33, 36, 0.1);
+  overflow: hidden;
+}
+
+.symbol-search-results.visible {
+  display: block;
+}
+
+.symbol-search-result {
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 0;
+  background: white;
+  color: var(--ink);
+  text-align: left;
+}
+
+.symbol-search-result + .symbol-search-result {
+  border-top: 1px solid var(--line-soft);
+}
+
+.symbol-search-result:hover {
+  background: #f8f9fa;
+}
+
+.symbol-search-primary {
+  display: block;
+  font-weight: 700;
+}
+
+.symbol-search-secondary {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 input {

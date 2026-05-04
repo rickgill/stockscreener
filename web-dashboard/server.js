@@ -34,6 +34,10 @@ const YAHOO_CHART_HOSTS = [
   "https://query1.finance.yahoo.com",
   "https://query2.finance.yahoo.com",
 ];
+const YAHOO_SEARCH_HOSTS = [
+  "https://query1.finance.yahoo.com",
+  "https://query2.finance.yahoo.com",
+];
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new DatabaseSync(DB_PATH);
@@ -77,6 +81,10 @@ function safeSymbol(rawSymbol) {
 function safeRange(rawRange) {
   const normalized = String(rawRange || "").trim().toLowerCase();
   return RANGE_CONFIG[normalized] ? normalized : "6mo";
+}
+
+function safeSearchQuery(rawQuery) {
+  return String(rawQuery || "").trim().slice(0, 50);
 }
 
 function readJsonBody(req) {
@@ -248,6 +256,61 @@ async function fetchHistory(symbol, range) {
   throw new Error(`Unable to load market data. ${errors.join(" | ")}`);
 }
 
+function buildSearchUrl(baseUrl, query) {
+  const target = new URL(`${baseUrl}/v1/finance/search`);
+  target.searchParams.set("q", query);
+  target.searchParams.set("quotesCount", "8");
+  target.searchParams.set("newsCount", "0");
+  target.searchParams.set("enableFuzzyQuery", "false");
+  target.searchParams.set("quotesQueryId", "tss_match_phrase_query");
+  target.searchParams.set("multiQuoteQueryId", "multi_quote_single_token_query");
+  target.searchParams.set("enableEnhancedTrivialQuery", "true");
+  return target;
+}
+
+async function fetchSearchResults(query) {
+  const errors = [];
+
+  for (const baseUrl of YAHOO_SEARCH_HOSTS) {
+    const target = buildSearchUrl(baseUrl, query);
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      try {
+        const response = await fetch(target, {
+          headers: {
+            "User-Agent": "Mozilla/5.0",
+            Accept: "application/json",
+          },
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Search request failed with status ${response.status}.`);
+        }
+
+        const payload = await response.json();
+        return (payload.quotes || [])
+          .filter((quote) => quote.symbol && !quote.symbol.includes("="))
+          .map((quote) => ({
+            symbol: quote.symbol,
+            shortName: quote.shortname || quote.longname || quote.symbol,
+            exchange: quote.exchange || quote.exchDisp || "",
+            type: quote.quoteType || "",
+          }));
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (error) {
+      const message = error.name === "AbortError" ? "Upstream request timed out." : error.message;
+      errors.push(`${baseUrl}: ${message}`);
+      console.error(`[symbol-search] ${query} failed via ${baseUrl}: ${message}`);
+    }
+  }
+
+  throw new Error(`Unable to search symbols. ${errors.join(" | ")}`);
+}
+
 function serveStatic(reqPath, res) {
   const relativePath = reqPath === "/" ? "/index.html" : reqPath;
   const normalizedPath = path.normalize(relativePath).replace(/^(\.\.[/\\])+/, "");
@@ -300,6 +363,22 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = await fetchHistory(symbol, range);
       sendJson(res, 200, data);
+    } catch (error) {
+      sendJson(res, 502, { error: error.message });
+    }
+    return;
+  }
+
+  if (requestUrl.pathname === "/api/symbol-search" && req.method === "GET") {
+    const query = safeSearchQuery(requestUrl.searchParams.get("q"));
+    if (query.length < 1) {
+      sendJson(res, 200, { results: [] });
+      return;
+    }
+
+    try {
+      const results = await fetchSearchResults(query);
+      sendJson(res, 200, { results });
     } catch (error) {
       sendJson(res, 502, { error: error.message });
     }

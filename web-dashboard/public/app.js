@@ -4,6 +4,7 @@ const cardsContainer = document.querySelector("#cards");
 const statusEl = document.querySelector("#status");
 const template = document.querySelector("#card-template");
 const globalRangeTabsEl = document.querySelector("#global-range-tabs");
+const searchResultsEl = document.querySelector("#symbol-search-results");
 const rangeStorageKey = "stock-dashboard-global-range";
 const rangePresets = [
   { key: "1d", label: "1D" },
@@ -23,6 +24,8 @@ const cards = new Map();
 const globalRangeButtons = new Map();
 let currentGlobalRange = loadRange();
 let draggingSymbol = null;
+let searchDebounceTimer = null;
+let currentSearchResults = [];
 
 function setStatus(message) {
   statusEl.textContent = message || "";
@@ -300,6 +303,56 @@ async function apiRequest(url, options = {}) {
   return payload;
 }
 
+function clearSearchResults() {
+  currentSearchResults = [];
+  searchResultsEl.innerHTML = "";
+  searchResultsEl.classList.remove("visible");
+}
+
+function renderSearchResults(results) {
+  currentSearchResults = results;
+  searchResultsEl.innerHTML = "";
+
+  if (!results.length) {
+    searchResultsEl.classList.remove("visible");
+    return;
+  }
+
+  results.forEach((result) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "symbol-search-result";
+    button.innerHTML = `
+      <span class="symbol-search-primary">${result.symbol}</span>
+      <span class="symbol-search-secondary">${result.shortName}${result.exchange ? ` · ${result.exchange}` : ""}</span>
+    `;
+    button.addEventListener("click", () => {
+      input.value = result.symbol;
+      clearSearchResults();
+      addSymbol(result.symbol);
+      input.focus();
+    });
+    searchResultsEl.appendChild(button);
+  });
+
+  searchResultsEl.classList.add("visible");
+}
+
+async function searchSymbols(query) {
+  if (query.trim().length < 1) {
+    clearSearchResults();
+    return;
+  }
+
+  try {
+    const payload = await apiRequest(`/api/symbol-search?q=${encodeURIComponent(query.trim())}`);
+    renderSearchResults(payload.results || []);
+  } catch (error) {
+    setStatus(error.message);
+    clearSearchResults();
+  }
+}
+
 function getCurrentCardOrder() {
   return Array.from(cardsContainer.querySelectorAll(".quote-card")).map((card) => card.dataset.symbol);
 }
@@ -551,6 +604,7 @@ async function addSymbol(rawSymbol) {
     });
     makeCard(symbol);
     setStatus(`${symbol} added.`);
+    clearSearchResults();
   } catch (error) {
     setStatus(error.message);
   }
@@ -560,7 +614,31 @@ form.addEventListener("submit", (event) => {
   event.preventDefault();
   addSymbol(input.value);
   input.value = "";
+  clearSearchResults();
   input.focus();
+});
+
+input.addEventListener("input", () => {
+  const query = input.value;
+  clearTimeout(searchDebounceTimer);
+  if (!query.trim()) {
+    clearSearchResults();
+    return;
+  }
+
+  searchDebounceTimer = setTimeout(() => {
+    searchSymbols(query);
+  }, 250);
+});
+
+input.addEventListener("blur", () => {
+  setTimeout(() => clearSearchResults(), 150);
+});
+
+input.addEventListener("focus", () => {
+  if (currentSearchResults.length > 0) {
+    searchResultsEl.classList.add("visible");
+  }
 });
 
 window.addEventListener("resize", () => {
@@ -576,13 +654,7 @@ async function init() {
     if (symbols.length > 0) {
       symbols.forEach((symbol) => makeCard(symbol));
     } else {
-      for (const symbol of ["AAPL", "MSFT", "GOOGL"]) {
-        await apiRequest("/api/symbols", {
-          method: "POST",
-          body: JSON.stringify({ symbol }),
-        });
-      }
-      ["AAPL", "MSFT", "GOOGL"].forEach((symbol) => makeCard(symbol));
+      setStatus("No saved symbols yet. Search for a company or ticker to add your first widget.");
     }
   } catch (error) {
     setStatus(error.message);
