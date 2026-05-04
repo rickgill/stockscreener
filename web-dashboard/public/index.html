@@ -3,42 +3,52 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Stock Quotes</title>
+    <title>Market Command</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="page-shell">
       <section class="topbar">
         <div class="topbar-copy">
-          <p class="eyebrow">Local market view</p>
-          <h1>Widget quotes with shared range control.</h1>
+          <p class="eyebrow">Live market workspace</p>
+          <h1>Market Command</h1>
           <p class="hero-copy">
-            Add a ticker and compare multiple quote widgets at once. The global range selector
-            updates every widget together.
+            Search symbols, stage a watchlist, and compare multi-card price action from one shared
+            command surface.
           </p>
-        </div>
-        <form id="add-form" class="add-form">
-          <label class="field-label" for="symbol-input">Stock symbol</label>
-          <div class="field-row">
-            <input
-              id="symbol-input"
-              name="symbol"
-              type="text"
-              placeholder="AAPL, MSFT, GOOGL, ^GSPC"
-              autocomplete="off"
-              spellcheck="false"
-            />
-            <button type="submit">Add</button>
+          <div class="hero-metrics" aria-hidden="true">
+            <span>Drag to reorder</span>
+            <span>Shared range sync</span>
+            <span>Saved locally</span>
           </div>
-          <div id="symbol-search-results" class="symbol-search-results" aria-live="polite"></div>
-          <p class="hint">Search by company or ticker. Saved symbols persist in the app database.</p>
-        </form>
-      </section>
+        </div>
+        <div class="topbar-controls">
+          <form id="add-form" class="add-form control-panel">
+            <label class="field-label" for="symbol-input">Stock symbol search</label>
+            <div class="field-row">
+              <input
+                id="symbol-input"
+                name="symbol"
+                type="text"
+                placeholder="AAPL, MSFT, GOOGL, NVDA, ^GSPC"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button type="submit">Add</button>
+            </div>
+            <div id="symbol-search-results" class="symbol-search-results" aria-live="polite"></div>
+            <p class="hint">Search by company or ticker. Saved symbols persist in the app database.</p>
+          </form>
 
-      <section class="global-range-bar">
-        <div>
-          <p class="field-label">Global range</p>
-          <div id="global-range-tabs" class="global-range-tabs" role="group" aria-label="Global chart range options"></div>
+          <section class="global-range-bar control-panel">
+            <div class="range-panel-head">
+              <div>
+                <p class="field-label">Global range select</p>
+                <p class="range-copy">Change the view once and every widget follows.</p>
+              </div>
+            </div>
+            <div id="global-range-tabs" class="global-range-tabs" role="group" aria-label="Global chart range options"></div>
+          </section>
         </div>
       </section>
 
