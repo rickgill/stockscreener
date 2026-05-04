@@ -2,6 +2,15 @@
 
 This file summarizes the work completed so far on the `stockscreener` project.
 
+## Project separation
+
+The repository was later reorganized into two explicit subprojects:
+
+- `web-dashboard/`
+- `powershell-screener/`
+
+This split makes the website and the PowerShell screener independently navigable and deployable.
+
 ## Repository setup
 
 - initialized the GitHub repository content from the local `stock-screener` workspace

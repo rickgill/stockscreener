@@ -1,71 +1,33 @@
-# Stock Screener
+# Stock Screener Projects
 
-This repo contains two related tools:
+This repository now contains two separate projects:
 
-- a local Node.js stock dashboard with draggable widgets, global and per-widget range selectors, and SQLite-backed symbol persistence
-- the original PowerShell Mag 7 screener scripts for rule-based report generation
+- [web-dashboard](./web-dashboard): a Node.js stock monitoring website with draggable widgets, local/global range selection, and SQLite-backed persistence
+- [powershell-screener](./powershell-screener): a PowerShell-based Magnificent 7 stock screener and reporting tool
 
-## Web dashboard
-
-The dashboard server is in `server.js` and the frontend lives under `public/`.
-
-Features:
-
-- multiple stock widgets on one page
-- drag-and-drop widget reordering
-- global time range selection
-- per-widget local time range selection
-- SQLite-backed saved symbol list and widget order
-- Yahoo Finance-backed historical chart data
-
-### Run locally
-
-```powershell
-node server.js
-```
-
-Then open:
+## Repo layout
 
 ```text
-http://localhost:3040
+web-dashboard/
+powershell-screener/
+WORK_DONE.md
 ```
 
-### Health check
+## Which project to use
 
-```text
-http://localhost:3040/health
-```
+Use `web-dashboard` if you want:
 
-### Data storage
+- an interactive website
+- live widget-based stock monitoring
+- browser UI with saved symbols and order
 
-By default, the app stores its SQLite database under `./data`.
+Use `powershell-screener` if you want:
 
-You can override that path with:
+- a scriptable rules-based screener
+- report generation
+- scheduled PowerShell execution
 
-```powershell
-$env:DATA_DIR="C:\path\to\data"
-node server.js
-```
+## Notes
 
-## Deploying
-
-The repo includes a `Dockerfile` and is prepared for platforms like Railway.
-
-Recommended deployment settings:
-
-- mount persistent storage at `/data`
-- set `DATA_DIR=/data`
-
-## PowerShell screener
-
-The PowerShell scripts remain in the repo:
-
-- `Get-Mag7Screener.ps1`
-- `Measure-Mag7ReportAccuracy.ps1`
-- `Register-Mag7DailyTask.ps1`
-
-Run the screener once:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Get-Mag7Screener.ps1
-```
+- the website project is prepared for deployment separately
+- the PowerShell project remains self-contained and script-driven
