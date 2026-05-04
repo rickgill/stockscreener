@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stock Quotes</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="topbar">
+        <div class="topbar-copy">
+          <p class="eyebrow">Local market view</p>
+          <h1>Widget quotes with shared range control.</h1>
+          <p class="hero-copy">
+            Add a ticker and compare multiple quote widgets at once. The global range selector
+            updates every widget together.
+          </p>
+        </div>
+        <form id="add-form" class="add-form">
+          <label class="field-label" for="symbol-input">Stock symbol</label>
+          <div class="field-row">
+            <input
+              id="symbol-input"
+              name="symbol"
+              type="text"
+              placeholder="AAPL, MSFT, GOOGL, ^GSPC"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button type="submit">Add</button>
+          </div>
+          <p class="hint">Saved locally in this browser.</p>
+        </form>
+      </section>
+
+      <section class="global-range-bar">
+        <div>
+          <p class="field-label">Global range</p>
+          <div id="global-range-tabs" class="global-range-tabs" role="group" aria-label="Global chart range options"></div>
+        </div>
+      </section>
+
+      <section id="status" class="status" aria-live="polite"></section>
+      <section id="cards" class="cards"></section>
+    </main>
+
+    <template id="card-template">
+      <article class="quote-card">
+        <header class="quote-header">
+          <div class="company-lockup">
+            <div class="logo-mark" aria-hidden="true"></div>
+            <div>
+              <h2 class="name"></h2>
+              <p class="symbol-line">
+                <span class="meta"></span>
+                <span class="dot-sep">&middot;</span>
+                <span class="symbol"></span>
+              </p>
+            </div>
+          </div>
+          <div class="card-actions">
+            <button class="ghost-button refresh-button" type="button">Refresh</button>
+            <button class="ghost-button remove-button" type="button">Remove</button>
+          </div>
+        </header>
+
+        <section class="price-block">
+          <div class="price-line">
+            <strong class="latest-price"></strong>
+            <span class="currency"></span>
+          </div>
+          <p class="change-line">
+            <span class="change"></span>
+            <span class="today-label">today</span>
+          </p>
+          <p class="market-time"></p>
+        </section>
+
+        <div class="range-tabs" role="group" aria-label="Local chart range options"></div>
+
+        <section class="chart-section">
+          <div class="chart-meta-left">
+            <span class="price-tag"></span>
+          </div>
+          <div class="chart-panel">
+            <div class="chart-side-labels"></div>
+            <canvas class="chart" width="900" height="360"></canvas>
+            <div class="chart-x-labels"></div>
+            <div class="chart-previous-close"></div>
+          </div>
+        </section>
+
+        <section class="metrics-grid">
+          <div class="metric">
+            <span class="metric-label">Open</span>
+            <strong class="metric-open"></strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Prev close</span>
+            <strong class="metric-prev-close"></strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Day high</span>
+            <strong class="metric-day-high"></strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Day low</span>
+            <strong class="metric-day-low"></strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">52-wk high</span>
+            <strong class="metric-52-high"></strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">52-wk low</span>
+            <strong class="metric-52-low"></strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Range starts</span>
+            <strong class="metric-range-start"></strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Points</span>
+            <strong class="metric-points"></strong>
+          </div>
+        </section>
+
+        <footer class="card-footer">
+          <span class="range-label"></span>
+          <span class="error-message"></span>
+        </footer>
+      </article>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
