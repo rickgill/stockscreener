@@ -30,6 +30,10 @@ const RANGE_CONFIG = {
   "10y": { days: 365 * 10, interval: "1wk" },
   max: { period1: 0, interval: "1wk" },
 };
+const YAHOO_CHART_HOSTS = [
+  "https://query1.finance.yahoo.com",
+  "https://query2.finance.yahoo.com",
+];
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new DatabaseSync(DB_PATH);
@@ -177,9 +181,8 @@ function formatChartData(symbol, range, chart) {
   };
 }
 
-async function fetchHistory(symbol, range) {
-  const rangeConfig = RANGE_CONFIG[range] || RANGE_CONFIG["6mo"];
-  const target = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`);
+function buildHistoryUrl(baseUrl, symbol, rangeConfig) {
+  const target = new URL(`${baseUrl}/v8/finance/chart/${encodeURIComponent(symbol)}`);
   const nowInSeconds = Math.floor(Date.now() / 1000);
 
   if (rangeConfig.range) {
@@ -194,24 +197,55 @@ async function fetchHistory(symbol, range) {
   target.searchParams.set("includePrePost", "false");
   target.searchParams.set("events", "div,splits");
 
-  const response = await fetch(target, {
-    headers: {
-      "User-Agent": "Mozilla/5.0",
-      Accept: "application/json",
-    },
-  });
+  return target;
+}
 
-  if (!response.ok) {
-    throw new Error(`Data request failed with status ${response.status}.`);
+async function fetchHistoryFromUrl(target) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const response = await fetch(target, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Accept: "application/json",
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Data request failed with status ${response.status}.`);
+    }
+
+    const payload = await response.json();
+    const error = payload?.chart?.error;
+    if (error) {
+      throw new Error(error.description || "Unknown upstream error.");
+    }
+
+    return payload.chart;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchHistory(symbol, range) {
+  const rangeConfig = RANGE_CONFIG[range] || RANGE_CONFIG["6mo"];
+  const errors = [];
+
+  for (const baseUrl of YAHOO_CHART_HOSTS) {
+    const target = buildHistoryUrl(baseUrl, symbol, rangeConfig);
+    try {
+      const chart = await fetchHistoryFromUrl(target);
+      return formatChartData(symbol, range, chart);
+    } catch (error) {
+      const message = error.name === "AbortError" ? "Upstream request timed out." : error.message;
+      errors.push(`${baseUrl}: ${message}`);
+      console.error(`[history] ${symbol} ${range} failed via ${baseUrl}: ${message}`);
+    }
   }
 
-  const payload = await response.json();
-  const error = payload?.chart?.error;
-  if (error) {
-    throw new Error(error.description || "Unknown upstream error.");
-  }
-
-  return formatChartData(symbol, range, payload.chart);
+  throw new Error(`Unable to load market data. ${errors.join(" | ")}`);
 }
 
 function serveStatic(reqPath, res) {
