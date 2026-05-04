@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Market Command Trending</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="site-nav">
+        <a class="brand-mark" href="/">Market Command</a>
+        <nav class="site-nav-links" aria-label="Primary">
+          <a href="/dashboard">Dashboard</a>
+          <a href="/screener">Signal Screener</a>
+          <a href="/institutional-flow">Institutional Flow</a>
+          <a class="active" href="/trending">Trending</a>
+        </nav>
+      </header>
+
+      <section class="subpage-hero">
+        <div>
+          <p class="eyebrow">Top 20 movers</p>
+          <h1>Trending 20</h1>
+          <p class="hero-copy">
+            A ranked view of the 20 most active names based on buying or selling pressure, gains,
+            short-term momentum, and volume expansion across a liquid-stock universe.
+          </p>
+        </div>
+        <div class="subpage-actions">
+          <button id="run-trending-button" type="button">Refresh Trending 20</button>
+        </div>
+      </section>
+
+      <section id="trending-status" class="status" aria-live="polite"></section>
+      <section id="trending-empty" class="empty-state hidden">
+        No trending stocks are available right now.
+      </section>
+      <section id="trending-results" class="analysis-grid"></section>
+    </main>
+
+    <script src="/trending.js"></script>
+  </body>
+</html>

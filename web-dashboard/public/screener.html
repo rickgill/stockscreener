@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Market Command Signal Screener</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="site-nav">
+        <a class="brand-mark" href="/">Market Command</a>
+        <nav class="site-nav-links" aria-label="Primary">
+          <a href="/dashboard">Dashboard</a>
+          <a class="active" href="/screener">Signal Screener</a>
+          <a href="/institutional-flow">Institutional Flow</a>
+          <a href="/trending">Trending</a>
+        </nav>
+      </header>
+
+      <section class="subpage-hero">
+        <div>
+          <p class="eyebrow">Technical ranking</p>
+          <h1>Signal Screener</h1>
+          <p class="hero-copy">
+            Every saved symbol is scored across trend, momentum, breakout, RSI, MACD, volume, and
+            extension signals to produce a direct recommendation.
+          </p>
+        </div>
+        <div class="subpage-actions">
+          <button id="run-screen-button" type="button">Run Screen</button>
+        </div>
+      </section>
+
+      <section id="screen-status" class="status" aria-live="polite"></section>
+      <section id="screen-empty" class="empty-state hidden">
+        Add symbols on the dashboard first, then return here to screen the saved watchlist.
+      </section>
+      <section id="screen-results" class="analysis-grid"></section>
+    </main>
+
+    <script src="/screener.js"></script>
+  </body>
+</html>

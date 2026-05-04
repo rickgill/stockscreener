@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Market Command Institutional Flow</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="site-nav">
+        <a class="brand-mark" href="/">Market Command</a>
+        <nav class="site-nav-links" aria-label="Primary">
+          <a href="/dashboard">Dashboard</a>
+          <a href="/screener">Signal Screener</a>
+          <a class="active" href="/institutional-flow">Institutional Flow</a>
+          <a href="/trending">Trending</a>
+        </nav>
+      </header>
+
+      <section class="subpage-hero">
+        <div>
+          <p class="eyebrow">Market-wide buy and sell pressure</p>
+          <h1>Market Flow Leaders</h1>
+          <p class="hero-copy">
+            This view ranks a liquid-stock universe by volume expansion, price strength, and
+            short-term accumulation or distribution behavior to surface the strongest current flow.
+          </p>
+        </div>
+        <div class="subpage-actions">
+          <button id="run-flow-button" type="button">Refresh Flow View</button>
+        </div>
+      </section>
+
+      <section class="note-banner">
+        Signals here are inferred from market-wide price and volume behavior across leading stocks.
+        They indicate likely buy or sell pressure, not direct real-time institutional order feeds.
+      </section>
+      <section id="flow-status" class="status" aria-live="polite"></section>
+      <section id="flow-empty" class="empty-state hidden">
+        No market flow leaders are available right now.
+      </section>
+      <section id="flow-results" class="analysis-grid"></section>
+    </main>
+
+    <script src="/institutional-flow.js"></script>
+  </body>
+</html>

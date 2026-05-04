@@ -8,141 +8,82 @@
   </head>
   <body>
     <main class="page-shell">
-      <section class="topbar">
-        <div class="topbar-copy">
-          <p class="eyebrow">Live market workspace</p>
-          <h1>Market Command</h1>
+      <header class="site-nav">
+        <a class="brand-mark" href="/">Market Command</a>
+        <nav class="site-nav-links" aria-label="Primary">
+          <a href="/dashboard">Dashboard</a>
+          <a href="/screener">Signal Screener</a>
+          <a href="/institutional-flow">Institutional Flow</a>
+          <a href="/trending">Trending</a>
+        </nav>
+      </header>
+
+      <section class="landing-hero">
+        <div class="landing-copy">
+          <p class="eyebrow">Market workspace</p>
+          <h1 class="landing-title">One command center for watchlists, technical signals, and institutional flow.</h1>
           <p class="hero-copy">
-            Search symbols, stage a watchlist, and compare multi-card price action from one shared
-            command surface.
+            Track live symbols, score your saved list with indicator-based buy and sell calls, and
+            scan which names show the strongest market-wide buying or selling pressure.
           </p>
-          <div class="hero-metrics" aria-hidden="true">
-            <span>Drag to reorder</span>
-            <span>Shared range sync</span>
-            <span>Saved locally</span>
+          <div class="landing-actions">
+            <a class="button-link" href="/dashboard">Open Dashboard</a>
+            <a class="button-link button-link-secondary" href="/screener">Run Screener</a>
           </div>
         </div>
-        <div class="topbar-controls">
-          <form id="add-form" class="add-form control-panel">
-            <label class="field-label" for="symbol-input">Stock symbol search</label>
-            <div class="field-row">
-              <input
-                id="symbol-input"
-                name="symbol"
-                type="text"
-                placeholder="AAPL, MSFT, GOOGL, NVDA, ^GSPC"
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <button type="submit">Add</button>
+        <aside class="landing-panel">
+          <p class="field-label">Included workspaces</p>
+          <div class="landing-mini-grid">
+            <div class="mini-tile">
+              <strong>Dashboard</strong>
+              <span>Live cards, synced ranges, saved symbols.</span>
             </div>
-            <div id="symbol-search-results" class="symbol-search-results" aria-live="polite"></div>
-            <p class="hint">Search by company or ticker. Saved symbols persist in the app database.</p>
-          </form>
-
-          <section class="global-range-bar control-panel">
-            <div class="range-panel-head">
-              <div>
-                <p class="field-label">Global range select</p>
-                <p class="range-copy">Change the view once and every widget follows.</p>
-              </div>
+            <div class="mini-tile">
+              <strong>Signal Screener</strong>
+              <span>Momentum, trend, RSI, MACD, breakout checks.</span>
             </div>
-            <div id="global-range-tabs" class="global-range-tabs" role="group" aria-label="Global chart range options"></div>
-          </section>
-        </div>
+            <div class="mini-tile">
+              <strong>Institutional Flow</strong>
+              <span>Liquid-stock flow signals built from price and volume pressure.</span>
+            </div>
+            <div class="mini-tile">
+              <strong>Trending 20</strong>
+              <span>Top movers ranked by activity, momentum, and trade pressure.</span>
+            </div>
+          </div>
+        </aside>
       </section>
 
-      <section id="status" class="status" aria-live="polite"></section>
-      <section id="cards" class="cards"></section>
-    </main>
-
-    <template id="card-template">
-      <article class="quote-card">
-        <header class="quote-header">
-          <div class="company-lockup">
-            <div class="logo-mark" aria-hidden="true"></div>
-            <div>
-              <h2 class="name"></h2>
-              <p class="symbol-line">
-                <span class="meta"></span>
-                <span class="dot-sep">&middot;</span>
-                <span class="symbol"></span>
-              </p>
-            </div>
-          </div>
-          <div class="card-actions">
-            <button class="ghost-button remove-button" type="button">Remove</button>
-          </div>
-        </header>
-
-        <section class="price-block">
-          <div class="price-line">
-            <strong class="latest-price"></strong>
-            <span class="currency"></span>
-          </div>
-          <p class="change-line">
-            <span class="change"></span>
-            <span class="today-label">today</span>
+      <section class="feature-grid">
+        <a class="feature-card" href="/dashboard">
+          <h2>Live Dashboard</h2>
+          <p>
+            The current quote workspace now lives here, with saved symbols, automatic refresh, and
+            drag-and-drop ordering.
           </p>
-          <p class="market-time"></p>
-        </section>
-
-        <div class="range-tabs" role="group" aria-label="Local chart range options"></div>
-
-        <section class="chart-section">
-          <div class="chart-meta-left">
-            <span class="price-tag"></span>
-          </div>
-          <div class="chart-panel">
-            <div class="chart-side-labels"></div>
-            <canvas class="chart" width="900" height="360"></canvas>
-            <div class="chart-x-labels"></div>
-            <div class="chart-previous-close"></div>
-          </div>
-        </section>
-
-        <section class="metrics-grid">
-          <div class="metric">
-            <span class="metric-label">Open</span>
-            <strong class="metric-open"></strong>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Prev close</span>
-            <strong class="metric-prev-close"></strong>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Day high</span>
-            <strong class="metric-day-high"></strong>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Day low</span>
-            <strong class="metric-day-low"></strong>
-          </div>
-          <div class="metric">
-            <span class="metric-label">52-wk high</span>
-            <strong class="metric-52-high"></strong>
-          </div>
-          <div class="metric">
-            <span class="metric-label">52-wk low</span>
-            <strong class="metric-52-low"></strong>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Range starts</span>
-            <strong class="metric-range-start"></strong>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Points</span>
-            <strong class="metric-points"></strong>
-          </div>
-        </section>
-
-        <footer class="card-footer">
-          <span class="range-label"></span>
-          <span class="error-message"></span>
-        </footer>
-      </article>
-    </template>
-
-    <script src="/app.js"></script>
+        </a>
+        <a class="feature-card" href="/screener">
+          <h2>Signal Screener</h2>
+          <p>
+            Screen every selected symbol and produce direct buy, hold, or sell recommendations from
+            multiple technical indicators.
+          </p>
+        </a>
+        <a class="feature-card" href="/institutional-flow">
+          <h2>Market Flow Leaders</h2>
+          <p>
+            Rank top liquid stocks by volume-confirmed accumulation or distribution signals across
+            the broader market.
+          </p>
+        </a>
+        <a class="feature-card" href="/trending">
+          <h2>Trending 20</h2>
+          <p>
+            Surface the 20 most active names based on buying or selling pressure, gains, and
+            short-term momentum.
+          </p>
+        </a>
+      </section>
+    </main>
   </body>
 </html>
