@@ -94,6 +94,7 @@ Prepared the app for internet hosting, especially Railway:
 - made data storage path configurable with `DATA_DIR`
 - added `/health` endpoint for deployment checks
 - updated README with local run and deployment guidance
+- documented `web-dashboard/` as the Railway service root after project separation
 
 ## Networking attempts
 

@@ -31,3 +31,11 @@ Use `powershell-screener` if you want:
 
 - the website project is prepared for deployment separately
 - the PowerShell project remains self-contained and script-driven
+
+## Railway deployment note
+
+If you deploy this repository to Railway, use:
+
+- service root: `web-dashboard`
+- volume mount path: `/data`
+- environment variable: `DATA_DIR=/data`

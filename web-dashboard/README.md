@@ -46,5 +46,8 @@ The project includes a `Dockerfile` and is prepared for platforms like Railway.
 
 Recommended deployment settings:
 
+- service root: `web-dashboard`
 - mount persistent storage at `/data`
 - set `DATA_DIR=/data`
+
+If Railway is deploying from the repository root, explicitly point the service at the `web-dashboard/` directory.
