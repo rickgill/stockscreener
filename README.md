@@ -10,8 +10,16 @@ This repository now contains two separate projects:
 ```text
 web-dashboard/
 powershell-screener/
+BUILD_FROM_SCRATCH.md
+USAGE_GUIDE.md
 WORK_DONE.md
 ```
+
+## Documentation
+
+- [BUILD_FROM_SCRATCH.md](./BUILD_FROM_SCRATCH.md): architecture, implementation details, backend/frontend design, deployment model, and rebuild sequence
+- [USAGE_GUIDE.md](./USAGE_GUIDE.md): operator-focused guide for watchlists, dashboard workflows, screener usage, backtests, and signal pages
+- [WORK_DONE.md](./WORK_DONE.md): historical summary of major project milestones
 
 ## Which project to use
 
