@@ -2,14 +2,26 @@ const resultsEl = document.querySelector("#screen-results");
 const statusEl = document.querySelector("#screen-status");
 const emptyEl = document.querySelector("#screen-empty");
 const runButton = document.querySelector("#run-screen-button");
+const screenWatchlistSelectEl = document.querySelector("#screen-watchlist-select");
 const backtestSummaryEl = document.querySelector("#backtest-summary");
 const backtestDirectionsEl = document.querySelector("#backtest-directions");
 const backtestSymbolsEl = document.querySelector("#backtest-symbols");
+const screenGroupTabsEl = document.querySelector("#screen-group-tabs");
 const backtestStatusEl = document.querySelector("#backtest-status");
 const backtestEmptyEl = document.querySelector("#backtest-empty");
 const backtestButton = document.querySelector("#run-backtest-button");
 const exportBacktestButton = document.querySelector("#export-backtest-button");
+const screenGroupStorageKey = "screen-signal-grouping";
+const screenWatchlistStorageKey = "screen-watchlist-view";
+const screenGroupModes = [
+  { key: "watchlist", label: "Watchlist order" },
+  { key: "signals", label: "Signal buckets" },
+];
+const screenGroupButtons = new Map();
 let hasBacktestData = false;
+let currentScreenGroup = loadScreenGroup();
+let currentScreenWatchlist = loadScreenWatchlist();
+let currentWatchlists = [];
 
 function setStatus(message) {
   statusEl.textContent = message || "";
@@ -17,6 +29,23 @@ function setStatus(message) {
 
 function setBacktestStatus(message) {
   backtestStatusEl.textContent = message || "";
+}
+
+function saveScreenGroup(group) {
+  localStorage.setItem(screenGroupStorageKey, group);
+}
+
+function loadScreenGroup() {
+  const value = localStorage.getItem(screenGroupStorageKey) || "watchlist";
+  return screenGroupModes.some((mode) => mode.key === value) ? value : "watchlist";
+}
+
+function saveScreenWatchlist(value) {
+  localStorage.setItem(screenWatchlistStorageKey, String(value));
+}
+
+function loadScreenWatchlist() {
+  return localStorage.getItem(screenWatchlistStorageKey) || "all";
 }
 
 function formatSkippedSymbols(skippedSymbols) {
@@ -79,6 +108,55 @@ function formatDirectionLabel(direction) {
   }
 }
 
+function updateScreenGroupButtons() {
+  screenGroupButtons.forEach((button, key) => {
+    button.classList.toggle("active", key === currentScreenGroup);
+    button.setAttribute("aria-pressed", String(key === currentScreenGroup));
+  });
+}
+
+function renderWatchlistOptions(activeWatchlist) {
+  currentScreenWatchlist = String(activeWatchlist);
+  saveScreenWatchlist(currentScreenWatchlist);
+  screenWatchlistSelectEl.innerHTML = "";
+
+  const allOption = document.createElement("option");
+  allOption.value = "all";
+  allOption.textContent = "All watchlists";
+  screenWatchlistSelectEl.appendChild(allOption);
+
+  currentWatchlists.forEach((watchlist) => {
+    const option = document.createElement("option");
+    option.value = String(watchlist.id);
+    option.textContent = watchlist.name;
+    screenWatchlistSelectEl.appendChild(option);
+  });
+
+  screenWatchlistSelectEl.value = currentScreenWatchlist;
+}
+
+function initScreenGroupTabs() {
+  screenGroupModes.forEach((mode) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "group-pill";
+    button.textContent = mode.label;
+    button.setAttribute("aria-pressed", "false");
+    button.addEventListener("click", () => {
+      if (mode.key === currentScreenGroup) {
+        return;
+      }
+      currentScreenGroup = mode.key;
+      saveScreenGroup(mode.key);
+      updateScreenGroupButtons();
+      loadScreen();
+    });
+    screenGroupButtons.set(mode.key, button);
+    screenGroupTabsEl.appendChild(button);
+  });
+  updateScreenGroupButtons();
+}
+
 async function apiRequest(url) {
   const response = await fetch(url);
   const payload = await response.json().catch(() => ({}));
@@ -113,11 +191,12 @@ function appendRecommendationCard(item) {
       ${item.summary.map((note) => `<li>${note}</li>`).join("")}
     </ul>
   `;
-  resultsEl.appendChild(article);
+  return article;
 }
 
 function renderRecommendations(recommendations) {
   resultsEl.innerHTML = "";
+  resultsEl.className = "analysis-grid";
 
   if (!recommendations.length) {
     emptyEl.classList.remove("hidden");
@@ -125,7 +204,7 @@ function renderRecommendations(recommendations) {
   }
 
   emptyEl.classList.add("hidden");
-  recommendations.forEach((item) => appendRecommendationCard(item));
+  recommendations.forEach((item) => resultsEl.appendChild(appendRecommendationCard(item)));
 }
 
 function renderSkippedRecommendationCard(symbol, error) {
@@ -144,8 +223,27 @@ function renderSkippedRecommendationCard(symbol, error) {
       <li>${error || "Market data was unavailable for this symbol."}</li>
     </ul>
   `;
-  resultsEl.appendChild(article);
+  return article;
 }
+
+function createGroupSection(title, copy, count) {
+  const section = document.createElement("section");
+  section.className = "group-section";
+  section.innerHTML = `
+    <div class="group-section-head">
+      <div>
+        <h2 class="group-section-title">${title}</h2>
+        <p class="group-section-copy">${copy}</p>
+      </div>
+      <span class="group-section-count">${count} ${count === 1 ? "signal" : "signals"}</span>
+    </div>
+  `;
+  const grid = document.createElement("div");
+  grid.className = "group-section-grid";
+  section.appendChild(grid);
+  return { section, grid };
+}
+
 
 function renderBacktest(payload) {
   const summary = payload.summary || [];
@@ -249,7 +347,11 @@ async function loadScreen() {
   setStatus("Running technical screen...");
 
   try {
-    const payload = await apiRequest("/api/recommendations/technical");
+    const payload = await apiRequest(
+      `/api/recommendations/technical?watchlist=${encodeURIComponent(currentScreenWatchlist)}`
+    );
+    currentWatchlists = payload.watchlists || [];
+    renderWatchlistOptions(payload.activeWatchlist ?? currentScreenWatchlist);
     const requestedSymbols = payload.requestedSymbols || [];
     const recommendations = payload.recommendations || [];
     const skippedSymbols = payload.skippedSymbols || [];
@@ -259,16 +361,95 @@ async function loadScreen() {
     resultsEl.innerHTML = "";
     if (!requestedSymbols.length) {
       renderRecommendations([]);
+    } else if (currentScreenWatchlist === "all") {
+      emptyEl.classList.add("hidden");
+      resultsEl.className = "grouped-layout";
+      currentWatchlists.forEach((watchlist) => {
+        const watchlistSymbols = watchlist.symbols || [];
+        const entries = watchlistSymbols
+          .filter((symbol) => requestedSymbols.includes(symbol))
+          .map((symbol) => ({
+            symbol,
+            recommendation: recommendationBySymbol.get(symbol),
+            error: skippedBySymbol.get(symbol),
+          }));
+
+        if (!entries.length) {
+          return;
+        }
+
+        const { section, grid } = createGroupSection(
+          watchlist.name,
+          "Signals for this watchlist.",
+          entries.length
+        );
+        entries.forEach((entry) => {
+          if (entry.recommendation) {
+            grid.appendChild(appendRecommendationCard(entry.recommendation));
+          } else {
+            grid.appendChild(renderSkippedRecommendationCard(entry.symbol, entry.error));
+          }
+        });
+        resultsEl.appendChild(section);
+      });
+    } else if (currentScreenGroup === "signals") {
+      emptyEl.classList.add("hidden");
+      resultsEl.className = "grouped-layout";
+      const groupDefinitions = [
+        { key: "Strong Buy", title: "Strong Buy cluster", copy: "Highest conviction upside setups." },
+        { key: "Buy", title: "Buy cluster", copy: "Constructive bullish signals that still need monitoring." },
+        { key: "Watch", title: "Watch cluster", copy: "Mixed setups with enough signal to monitor closely." },
+        { key: "No Trade", title: "No-trade cluster", copy: "Signals are too conflicted or weak to act on." },
+        { key: "Sell", title: "Sell cluster", copy: "Bearish setups with moderate downside pressure." },
+        { key: "Strong Sell", title: "Strong Sell cluster", copy: "Highest conviction downside setups." },
+        { key: "Skipped", title: "Skipped / unavailable", copy: "Saved watchlist names that could not be classified." },
+      ];
+      const grouped = new Map(groupDefinitions.map((group) => [group.key, []]));
+
+      requestedSymbols.forEach((symbol) => {
+        const recommendation = recommendationBySymbol.get(symbol);
+        if (recommendation) {
+          grouped.get(recommendation.recommendation)?.push({
+            type: "recommendation",
+            recommendation,
+          });
+          return;
+        }
+
+        grouped.get("Skipped").push({
+          type: "skipped",
+          symbol,
+          error: skippedBySymbol.get(symbol),
+        });
+      });
+
+      groupDefinitions.forEach((group) => {
+        const items = grouped.get(group.key) || [];
+        if (!items.length) {
+          return;
+        }
+
+        const { section, grid } = createGroupSection(group.title, group.copy, items.length);
+        items.forEach((entry) => {
+          if (entry.type === "recommendation") {
+            grid.appendChild(appendRecommendationCard(entry.recommendation));
+          } else {
+            grid.appendChild(renderSkippedRecommendationCard(entry.symbol, entry.error));
+          }
+        });
+        resultsEl.appendChild(section);
+      });
     } else {
+      resultsEl.className = "analysis-grid";
       emptyEl.classList.add("hidden");
       requestedSymbols.forEach((symbol) => {
         const recommendation = recommendationBySymbol.get(symbol);
         if (recommendation) {
-          appendRecommendationCard(recommendation);
+          resultsEl.appendChild(appendRecommendationCard(recommendation));
           return;
         }
 
-        renderSkippedRecommendationCard(symbol, skippedBySymbol.get(symbol));
+        resultsEl.appendChild(renderSkippedRecommendationCard(symbol, skippedBySymbol.get(symbol)));
       });
     }
 
@@ -289,7 +470,13 @@ async function loadBacktest() {
   setBacktestStatus("Running rolling backtest...");
 
   try {
-    const payload = await apiRequest("/api/backtest/technical");
+    const payload = await apiRequest(
+      `/api/backtest/technical?watchlist=${encodeURIComponent(currentScreenWatchlist)}`
+    );
+    currentWatchlists = payload.watchlists || currentWatchlists;
+    if (payload.activeWatchlist != null) {
+      renderWatchlistOptions(payload.activeWatchlist);
+    }
     renderBacktest(payload);
     const warning = formatSkippedSymbols(payload.skippedSymbols);
     setBacktestStatus(payload.symbols?.length ? `Backtest updated. ${warning}`.trim() : warning);
@@ -314,7 +501,9 @@ function exportBacktestCsv() {
 
   exportBacktestButton.disabled = true;
   setBacktestStatus("Preparing CSV export...");
-  window.location.assign("/api/backtest/technical?format=csv");
+  window.location.assign(
+    `/api/backtest/technical?watchlist=${encodeURIComponent(currentScreenWatchlist)}&format=csv`
+  );
   window.setTimeout(() => {
     exportBacktestButton.disabled = false;
     setBacktestStatus("Backtest CSV requested.");
@@ -324,5 +513,11 @@ function exportBacktestCsv() {
 runButton.addEventListener("click", loadScreen);
 backtestButton.addEventListener("click", loadBacktest);
 exportBacktestButton.addEventListener("click", exportBacktestCsv);
+screenWatchlistSelectEl.addEventListener("change", () => {
+  currentScreenWatchlist = screenWatchlistSelectEl.value;
+  saveScreenWatchlist(currentScreenWatchlist);
+  loadScreen();
+});
+initScreenGroupTabs();
 setBacktestStatus("Backtest is available on demand. Run it when you want validation metrics.");
 loadScreen();

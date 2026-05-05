@@ -33,6 +33,26 @@
       </section>
 
       <section id="screen-status" class="status" aria-live="polite"></section>
+      <section class="grouping-bar control-panel">
+        <div class="range-panel-head">
+          <div>
+            <p class="field-label">Watchlist view</p>
+            <p class="range-copy">Screen one watchlist at a time or scan all grouped by watchlist.</p>
+          </div>
+        </div>
+        <div class="watchlist-view-row">
+          <select id="screen-watchlist-select"></select>
+        </div>
+      </section>
+      <section class="grouping-bar control-panel">
+        <div class="range-panel-head">
+          <div>
+            <p class="field-label">Signal grouping</p>
+            <p class="range-copy">Switch between watchlist order and grouped signal buckets.</p>
+          </div>
+        </div>
+        <div id="screen-group-tabs" class="group-tabs" role="group" aria-label="Signal screener grouping options"></div>
+      </section>
       <section id="screen-empty" class="empty-state hidden">
         Add symbols on the dashboard first, then return here to screen the saved watchlist.
       </section>

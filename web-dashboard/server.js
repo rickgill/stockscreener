@@ -115,6 +115,7 @@ const SECTOR_BENCHMARKS = {
   WMT: "XLP",
   COIN: "XLF",
 };
+const DEFAULT_WATCHLIST_NAME = "Core";
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new DatabaseSync(DB_PATH);
@@ -139,6 +140,60 @@ db.exec(`
     FROM symbols AS s2
     WHERE s2.created_at < symbols.created_at
        OR (s2.created_at = symbols.created_at AND s2.symbol <= symbols.symbol)
+  )
+  WHERE sort_order IS NULL
+`);
+db.exec(`
+  CREATE TABLE IF NOT EXISTS watchlists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sort_order INTEGER
+  )
+`);
+db.exec(`
+  CREATE TABLE IF NOT EXISTS watchlist_symbols (
+    watchlist_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sort_order INTEGER,
+    PRIMARY KEY (watchlist_id, symbol),
+    FOREIGN KEY (watchlist_id) REFERENCES watchlists(id) ON DELETE CASCADE
+  )
+`);
+const existingDefaultWatchlist = db.prepare("SELECT id FROM watchlists WHERE name = ?").get(DEFAULT_WATCHLIST_NAME);
+if (!existingDefaultWatchlist) {
+  db.prepare("INSERT INTO watchlists (name, sort_order) VALUES (?, 1)").run(DEFAULT_WATCHLIST_NAME);
+}
+db.exec(`
+  UPDATE watchlists
+  SET sort_order = (
+    SELECT COUNT(*)
+    FROM watchlists AS w2
+    WHERE w2.created_at < watchlists.created_at
+       OR (w2.created_at = watchlists.created_at AND w2.id <= watchlists.id)
+  )
+  WHERE sort_order IS NULL
+`);
+const defaultWatchlist = db.prepare("SELECT id FROM watchlists WHERE name = ?").get(DEFAULT_WATCHLIST_NAME);
+const legacySymbols = db
+  .prepare("SELECT symbol, sort_order FROM symbols ORDER BY sort_order ASC, created_at ASC, symbol ASC")
+  .all();
+legacySymbols.forEach((row, index) => {
+  db.prepare(
+    "INSERT OR IGNORE INTO watchlist_symbols (watchlist_id, symbol, sort_order) VALUES (?, ?, ?)"
+  ).run(defaultWatchlist.id, row.symbol, row.sort_order ?? index + 1);
+});
+db.exec(`
+  UPDATE watchlist_symbols
+  SET sort_order = (
+    SELECT COUNT(*)
+    FROM watchlist_symbols AS ws2
+    WHERE ws2.watchlist_id = watchlist_symbols.watchlist_id
+      AND (
+        ws2.created_at < watchlist_symbols.created_at
+        OR (ws2.created_at = watchlist_symbols.created_at AND ws2.symbol <= watchlist_symbols.symbol)
+      )
   )
   WHERE sort_order IS NULL
 `);
@@ -172,6 +227,22 @@ function safeSearchQuery(rawQuery) {
   return String(rawQuery || "").trim().slice(0, 50);
 }
 
+function safeWatchlistName(rawName) {
+  return String(rawName || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 40);
+}
+
+function normalizeWatchlistId(rawWatchlistId) {
+  if (rawWatchlistId == null || rawWatchlistId === "" || rawWatchlistId === "all") {
+    return "all";
+  }
+
+  const parsed = Number(rawWatchlistId);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -193,22 +264,74 @@ function readJsonBody(req) {
   });
 }
 
-function listStoredSymbols() {
+function listWatchlists() {
   return db
-    .prepare("SELECT symbol FROM symbols ORDER BY sort_order ASC, created_at ASC, symbol ASC")
+    .prepare(
+      `
+        SELECT
+          w.id,
+          w.name,
+          w.sort_order,
+          COALESCE(
+            json_group_array(
+              json_object(
+                'symbol', ws.symbol,
+                'sort_order', ws.sort_order
+              )
+            ) FILTER (WHERE ws.symbol IS NOT NULL),
+            json('[]')
+          ) AS symbols_json
+        FROM watchlists w
+        LEFT JOIN watchlist_symbols ws
+          ON ws.watchlist_id = w.id
+        GROUP BY w.id, w.name, w.sort_order
+        ORDER BY w.sort_order ASC, w.created_at ASC, w.id ASC
+      `
+    )
     .all()
-    .map((row) => row.symbol);
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      sortOrder: row.sort_order,
+      symbols: JSON.parse(row.symbols_json)
+        .sort((left, right) => (left.sort_order ?? 0) - (right.sort_order ?? 0))
+        .map((entry) => entry.symbol),
+    }));
 }
 
-function getNextSortOrder() {
-  const row = db.prepare("SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_order FROM symbols").get();
+function getWatchlistById(watchlistId) {
+  return listWatchlists().find((watchlist) => watchlist.id === watchlistId) || null;
+}
+
+function getDefaultWatchlist() {
+  return listWatchlists().find((watchlist) => watchlist.name === DEFAULT_WATCHLIST_NAME) || null;
+}
+
+function listStoredSymbols(watchlistId = "all") {
+  const watchlists = listWatchlists();
+  if (watchlistId === "all") {
+    return [...new Set(watchlists.flatMap((watchlist) => watchlist.symbols))];
+  }
+
+  return watchlists.find((watchlist) => watchlist.id === watchlistId)?.symbols || [];
+}
+
+function getNextWatchlistSortOrder() {
+  const row = db.prepare("SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_order FROM watchlists").get();
   return row.next_order;
 }
 
-function replaceSymbolOrder(symbols) {
-  const updateStmt = db.prepare("UPDATE symbols SET sort_order = ? WHERE symbol = ?");
+function getNextSymbolSortOrder(watchlistId) {
+  const row = db
+    .prepare("SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_order FROM watchlist_symbols WHERE watchlist_id = ?")
+    .get(watchlistId);
+  return row.next_order;
+}
+
+function replaceSymbolOrder(watchlistId, symbols) {
+  const updateStmt = db.prepare("UPDATE watchlist_symbols SET sort_order = ? WHERE watchlist_id = ? AND symbol = ?");
   symbols.forEach((symbol, index) => {
-    updateStmt.run(index + 1, symbol);
+    updateStmt.run(index + 1, watchlistId, symbol);
   });
 }
 
@@ -1490,14 +1613,28 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (requestUrl.pathname === "/api/symbols" && req.method === "GET") {
-    sendJson(res, 200, { symbols: listStoredSymbols() });
+    const activeWatchlist = normalizeWatchlistId(requestUrl.searchParams.get("watchlist"));
+    if (activeWatchlist == null) {
+      sendJson(res, 400, { error: "Invalid watchlist selection." });
+      return;
+    }
+    sendJson(res, 200, {
+      activeWatchlist,
+      symbols: listStoredSymbols(activeWatchlist),
+      watchlists: listWatchlists(),
+    });
     return;
   }
 
   if (requestUrl.pathname === "/api/recommendations/technical" && req.method === "GET") {
-    const symbols = listStoredSymbols();
+    const activeWatchlist = normalizeWatchlistId(requestUrl.searchParams.get("watchlist"));
+    if (activeWatchlist == null) {
+      sendJson(res, 400, { error: "Invalid watchlist selection." });
+      return;
+    }
+    const symbols = listStoredSymbols(activeWatchlist);
     if (!symbols.length) {
-      sendJson(res, 200, { recommendations: [] });
+      sendJson(res, 200, { activeWatchlist, requestedSymbols: [], recommendations: [], skippedSymbols: [], watchlists: listWatchlists() });
       return;
     }
 
@@ -1521,9 +1658,11 @@ const server = http.createServer(async (req, res) => {
         buildTechnicalRecommendation(result.symbol, result.history, marketContext)
       );
       sendJson(res, 200, {
+        activeWatchlist,
         requestedSymbols: symbols,
         recommendations,
         skippedSymbols,
+        watchlists: listWatchlists(),
       });
     } catch (error) {
       sendJson(res, 502, { error: error.message });
@@ -1532,13 +1671,18 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (requestUrl.pathname === "/api/backtest/technical" && req.method === "GET") {
-    const symbols = listStoredSymbols();
+    const activeWatchlist = normalizeWatchlistId(requestUrl.searchParams.get("watchlist"));
+    if (activeWatchlist == null) {
+      sendJson(res, 400, { error: "Invalid watchlist selection." });
+      return;
+    }
+    const symbols = listStoredSymbols(activeWatchlist);
     if (!symbols.length) {
       if (requestUrl.searchParams.get("format") === "csv") {
         sendCsv(res, 200, "technical-backtest.csv", "symbol\n");
         return;
       }
-      sendJson(res, 200, { summary: [], directionSummary: [], symbols: [] });
+      sendJson(res, 200, { activeWatchlist, requestedSymbols: [], summary: [], directionSummary: [], symbols: [], skippedSymbols: [], watchlists: listWatchlists() });
       return;
     }
 
@@ -1697,11 +1841,13 @@ const server = http.createServer(async (req, res) => {
       }
 
       sendJson(res, 200, {
+        activeWatchlist,
         requestedSymbols: symbols,
         summary,
         directionSummary,
         symbols: backtests,
         skippedSymbols,
+        watchlists: listWatchlists(),
       });
     } catch (error) {
       sendJson(res, 502, { error: error.message });
@@ -1738,20 +1884,102 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (requestUrl.pathname === "/api/watchlists" && req.method === "GET") {
+    sendJson(res, 200, { watchlists: listWatchlists() });
+    return;
+  }
+
+  if (requestUrl.pathname === "/api/watchlists" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req);
+      const name = safeWatchlistName(body.name);
+      if (!name) {
+        sendJson(res, 400, { error: "Missing watchlist name." });
+        return;
+      }
+
+      db.prepare("INSERT INTO watchlists (name, sort_order) VALUES (?, ?)").run(name, getNextWatchlistSortOrder());
+      sendJson(res, 200, { watchlists: listWatchlists() });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  if (requestUrl.pathname.startsWith("/api/watchlists/") && req.method === "DELETE") {
+    const rawId = requestUrl.pathname.slice("/api/watchlists/".length);
+    const watchlistId = normalizeWatchlistId(rawId);
+    if (watchlistId == null || watchlistId === "all") {
+      sendJson(res, 400, { error: "Invalid watchlist selection." });
+      return;
+    }
+
+    const watchlist = getWatchlistById(watchlistId);
+    if (!watchlist) {
+      sendJson(res, 404, { error: "Watchlist not found." });
+      return;
+    }
+
+    if (watchlist.name === DEFAULT_WATCHLIST_NAME) {
+      sendJson(res, 400, { error: "The Core watchlist cannot be deleted." });
+      return;
+    }
+
+    const defaultWatchlist = getDefaultWatchlist();
+    if (!defaultWatchlist) {
+      sendJson(res, 500, { error: "Core watchlist is unavailable." });
+      return;
+    }
+
+    const symbolsToMove = listStoredSymbols(watchlistId);
+    symbolsToMove.forEach((symbol) => {
+      db.prepare("DELETE FROM watchlist_symbols WHERE symbol = ?").run(symbol);
+      db.prepare("INSERT INTO watchlist_symbols (watchlist_id, symbol, sort_order) VALUES (?, ?, ?)").run(
+        defaultWatchlist.id,
+        symbol,
+        getNextSymbolSortOrder(defaultWatchlist.id)
+      );
+    });
+
+    db.prepare("DELETE FROM watchlists WHERE id = ?").run(watchlistId);
+    sendJson(res, 200, {
+      deletedWatchlistId: watchlistId,
+      movedSymbols: symbolsToMove,
+      watchlists: listWatchlists(),
+    });
+    return;
+  }
+
   if (requestUrl.pathname === "/api/symbols" && req.method === "POST") {
     try {
       const body = await readJsonBody(req);
       const symbol = safeSymbol(body.symbol);
+      const watchlistId = normalizeWatchlistId(body.watchlistId);
       if (!symbol) {
         sendJson(res, 400, { error: "Missing stock symbol." });
         return;
       }
+      if (watchlistId == null || watchlistId === "all") {
+        sendJson(res, 400, { error: "Choose a specific watchlist for new symbols." });
+        return;
+      }
+      if (!getWatchlistById(watchlistId)) {
+        sendJson(res, 404, { error: "Watchlist not found." });
+        return;
+      }
 
-      db.prepare("INSERT OR IGNORE INTO symbols (symbol, sort_order) VALUES (?, ?)").run(
+      db.prepare("DELETE FROM watchlist_symbols WHERE symbol = ?").run(symbol);
+      db.prepare("INSERT INTO watchlist_symbols (watchlist_id, symbol, sort_order) VALUES (?, ?, ?)").run(
+        watchlistId,
         symbol,
-        getNextSortOrder()
+        getNextSymbolSortOrder(watchlistId)
       );
-      sendJson(res, 200, { symbol, symbols: listStoredSymbols() });
+      sendJson(res, 200, {
+        symbol,
+        activeWatchlist: watchlistId,
+        symbols: listStoredSymbols(watchlistId),
+        watchlists: listWatchlists(),
+      });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -1761,8 +1989,13 @@ const server = http.createServer(async (req, res) => {
   if (requestUrl.pathname === "/api/symbols/order" && req.method === "PUT") {
     try {
       const body = await readJsonBody(req);
+      const watchlistId = normalizeWatchlistId(body.watchlistId);
       const symbols = Array.isArray(body.symbols) ? body.symbols.map(safeSymbol).filter(Boolean) : [];
-      const storedSymbols = listStoredSymbols();
+      if (watchlistId == null || watchlistId === "all") {
+        sendJson(res, 400, { error: "Choose a specific watchlist to reorder." });
+        return;
+      }
+      const storedSymbols = listStoredSymbols(watchlistId);
 
       if (symbols.length !== storedSymbols.length) {
         sendJson(res, 400, { error: "Order payload does not match stored symbols." });
@@ -1775,8 +2008,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      replaceSymbolOrder(symbols);
-      sendJson(res, 200, { symbols: listStoredSymbols() });
+      replaceSymbolOrder(watchlistId, symbols);
+      sendJson(res, 200, { activeWatchlist: watchlistId, symbols: listStoredSymbols(watchlistId), watchlists: listWatchlists() });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -1785,13 +2018,29 @@ const server = http.createServer(async (req, res) => {
 
   if (requestUrl.pathname.startsWith("/api/symbols/") && req.method === "DELETE") {
     const symbol = safeSymbol(decodeURIComponent(requestUrl.pathname.slice("/api/symbols/".length)));
+    const watchlistId = normalizeWatchlistId(requestUrl.searchParams.get("watchlist"));
     if (!symbol) {
       sendJson(res, 400, { error: "Missing stock symbol." });
       return;
     }
+    if (watchlistId == null) {
+      sendJson(res, 400, { error: "Invalid watchlist selection." });
+      return;
+    }
 
-    db.prepare("DELETE FROM symbols WHERE symbol = ?").run(symbol);
-    sendJson(res, 200, { symbol, symbols: listStoredSymbols() });
+    if (watchlistId === "all") {
+      db.prepare("DELETE FROM watchlist_symbols WHERE symbol = ?").run(symbol);
+      sendJson(res, 200, { symbol, activeWatchlist: "all", symbols: listStoredSymbols("all"), watchlists: listWatchlists() });
+      return;
+    }
+
+    db.prepare("DELETE FROM watchlist_symbols WHERE watchlist_id = ? AND symbol = ?").run(watchlistId, symbol);
+    sendJson(res, 200, {
+      symbol,
+      activeWatchlist: watchlistId,
+      symbols: listStoredSymbols(watchlistId),
+      watchlists: listWatchlists(),
+    });
     return;
   }
 

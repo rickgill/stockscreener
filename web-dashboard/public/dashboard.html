@@ -35,6 +35,13 @@
         <div class="topbar-controls">
           <form id="add-form" class="add-form control-panel">
             <label class="field-label" for="symbol-input">Stock symbol search</label>
+            <div class="watchlist-row">
+              <div class="watchlist-field">
+                <label class="field-label" for="add-watchlist-select">Add to watchlist</label>
+                <select id="add-watchlist-select"></select>
+              </div>
+              <button id="create-watchlist-button" class="ghost-button" type="button">New watchlist</button>
+            </div>
             <div class="field-row">
               <input
                 id="symbol-input"
@@ -63,6 +70,27 @@
       </section>
 
       <section id="status" class="status" aria-live="polite"></section>
+      <section class="grouping-bar control-panel">
+        <div class="range-panel-head">
+          <div>
+            <p class="field-label">Watchlist view</p>
+            <p class="range-copy">Focus on one watchlist or scan all of them together.</p>
+          </div>
+        </div>
+        <div class="watchlist-view-row">
+          <select id="watchlist-view-select"></select>
+          <button id="delete-watchlist-button" class="ghost-button" type="button">Delete watchlist</button>
+        </div>
+      </section>
+      <section class="grouping-bar control-panel">
+        <div class="range-panel-head">
+          <div>
+            <p class="field-label">Dashboard grouping</p>
+            <p class="range-copy">Keep watchlist order or cluster names by shared range behavior.</p>
+          </div>
+        </div>
+        <div id="dashboard-group-tabs" class="group-tabs" role="group" aria-label="Dashboard grouping options"></div>
+      </section>
       <section id="cards" class="cards"></section>
     </main>
 
@@ -81,6 +109,8 @@
             </div>
           </div>
           <div class="card-actions">
+            <select class="watchlist-move-select"></select>
+            <button class="ghost-button move-button" type="button">Move</button>
             <button class="ghost-button remove-button" type="button">Remove</button>
           </div>
         </header>

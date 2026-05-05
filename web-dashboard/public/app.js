@@ -4,8 +4,15 @@ const cardsContainer = document.querySelector("#cards");
 const statusEl = document.querySelector("#status");
 const template = document.querySelector("#card-template");
 const globalRangeTabsEl = document.querySelector("#global-range-tabs");
+const dashboardGroupTabsEl = document.querySelector("#dashboard-group-tabs");
+const addWatchlistSelectEl = document.querySelector("#add-watchlist-select");
+const watchlistViewSelectEl = document.querySelector("#watchlist-view-select");
+const createWatchlistButton = document.querySelector("#create-watchlist-button");
+const deleteWatchlistButton = document.querySelector("#delete-watchlist-button");
 const searchResultsEl = document.querySelector("#symbol-search-results");
 const rangeStorageKey = "stock-dashboard-global-range";
+const dashboardGroupStorageKey = "stock-dashboard-grouping";
+const dashboardWatchlistStorageKey = "stock-dashboard-watchlist-view";
 const rangePresets = [
   { key: "1d", label: "1D" },
   { key: "15d", label: "15D" },
@@ -19,15 +26,25 @@ const rangePresets = [
   { key: "max", label: "Max" },
 ];
 const defaultRange = "1d";
+const defaultDashboardGroup = "watchlist";
 const autoRefreshMs = 10000;
+const dashboardGroupModes = [
+  { key: "watchlist", label: "Watchlist order" },
+  { key: "trend", label: "Trend buckets" },
+];
 
 const cards = new Map();
 const globalRangeButtons = new Map();
+const dashboardGroupButtons = new Map();
 let currentGlobalRange = loadRange();
+let currentDashboardGroup = loadDashboardGroup();
+let currentWatchlistView = loadWatchlistView();
 let draggingSymbol = null;
 let searchDebounceTimer = null;
 let currentSearchResults = [];
 let autoRefreshTimer = null;
+let watchlistOrder = [];
+let watchlists = [];
 
 function setStatus(message) {
   statusEl.textContent = message || "";
@@ -74,8 +91,82 @@ function loadRange() {
   return rangePresets.some((preset) => preset.key === value) ? value : defaultRange;
 }
 
+function saveDashboardGroup(group) {
+  localStorage.setItem(dashboardGroupStorageKey, group);
+}
+
+function loadDashboardGroup() {
+  const value = localStorage.getItem(dashboardGroupStorageKey) || defaultDashboardGroup;
+  return dashboardGroupModes.some((mode) => mode.key === value) ? value : defaultDashboardGroup;
+}
+
+function saveWatchlistView(value) {
+  localStorage.setItem(dashboardWatchlistStorageKey, String(value));
+}
+
+function loadWatchlistView() {
+  return localStorage.getItem(dashboardWatchlistStorageKey) || "";
+}
+
 function normalizeSymbol(symbol) {
   return symbol.trim().toUpperCase();
+}
+
+function getWatchlistOptionValue(watchlistId) {
+  return watchlistId === "all" ? "all" : String(watchlistId);
+}
+
+function normalizeCurrentWatchlistView() {
+  if (currentWatchlistView === "all" && watchlists.length > 1) {
+    return;
+  }
+
+  const exists = watchlists.some((watchlist) => String(watchlist.id) === String(currentWatchlistView));
+  if (!exists) {
+    currentWatchlistView = watchlists[0] ? String(watchlists[0].id) : "all";
+  }
+}
+
+function renderWatchlistControls() {
+  normalizeCurrentWatchlistView();
+
+  addWatchlistSelectEl.innerHTML = "";
+  watchlistViewSelectEl.innerHTML = "";
+
+  watchlists.forEach((watchlist) => {
+    const addOption = document.createElement("option");
+    addOption.value = String(watchlist.id);
+    addOption.textContent = watchlist.name;
+    addWatchlistSelectEl.appendChild(addOption);
+
+    const viewOption = document.createElement("option");
+    viewOption.value = String(watchlist.id);
+    viewOption.textContent = watchlist.name;
+    watchlistViewSelectEl.appendChild(viewOption);
+  });
+
+  const allOption = document.createElement("option");
+  allOption.value = "all";
+  allOption.textContent = "All watchlists";
+  watchlistViewSelectEl.insertBefore(allOption, watchlistViewSelectEl.firstChild);
+
+  const selectedAddWatchlist =
+    watchlists.find((watchlist) => String(watchlist.id) === String(currentWatchlistView)) || watchlists[0];
+  if (selectedAddWatchlist) {
+    addWatchlistSelectEl.value = String(selectedAddWatchlist.id);
+  }
+
+  watchlistViewSelectEl.value = getWatchlistOptionValue(currentWatchlistView);
+  const selectedWatchlist = watchlists.find((watchlist) => String(watchlist.id) === String(currentWatchlistView));
+  deleteWatchlistButton.disabled = !selectedWatchlist || selectedWatchlist.name === "Core";
+}
+
+function getWatchlistForSymbol(symbol) {
+  return watchlists.find((watchlist) => watchlist.symbols.includes(symbol)) || null;
+}
+
+function getActiveWatchlistId() {
+  return currentWatchlistView === "all" ? "all" : Number(currentWatchlistView);
 }
 
 function getRangeLabel(rangeKey) {
@@ -271,6 +362,7 @@ function setGlobalRange(range) {
   saveRange(range);
   updateGlobalRangeButtons();
   cards.forEach(({ setRange }) => setRange(range, { fromGlobal: true }));
+  renderCards();
   setStatus(`Global range changed to ${getRangeLabel(range)}.`);
 }
 
@@ -286,6 +378,168 @@ function initGlobalRangeTabs() {
     globalRangeTabsEl.appendChild(button);
   });
   updateGlobalRangeButtons();
+}
+
+function updateDashboardGroupButtons() {
+  dashboardGroupButtons.forEach((button, key) => {
+    button.classList.toggle("active", key === currentDashboardGroup);
+    button.setAttribute("aria-pressed", String(key === currentDashboardGroup));
+  });
+}
+
+function createGroupSection(title, copy, count) {
+  const section = document.createElement("section");
+  section.className = "group-section";
+  section.innerHTML = `
+    <div class="group-section-head">
+      <div>
+        <h2 class="group-section-title">${title}</h2>
+        <p class="group-section-copy">${copy}</p>
+      </div>
+      <span class="group-section-count">${count} ${count === 1 ? "name" : "names"}</span>
+    </div>
+  `;
+  const grid = document.createElement("div");
+  grid.className = "group-section-grid";
+  section.appendChild(grid);
+  return { section, grid };
+}
+
+function getTrendGroupMeta(state) {
+  const payload = state.currentPayload;
+  if (!payload?.points?.length) {
+    return {
+      key: "pending",
+      title: "Pending / unavailable",
+      copy: "Cards still loading or waiting on enough market data.",
+    };
+  }
+
+  const first = payload.points[0];
+  const latest = payload.points[payload.points.length - 1];
+  const rangeReturnPct = first?.close ? ((latest.close - first.close) / first.close) * 100 : 0;
+
+  if (rangeReturnPct >= 3) {
+    return {
+      key: "leaders",
+      title: `${getRangeLabel(currentGlobalRange)} leaders`,
+      copy: "Names showing the strongest upside momentum over the active chart window.",
+    };
+  }
+
+  if (rangeReturnPct <= -3) {
+    return {
+      key: "laggards",
+      title: `${getRangeLabel(currentGlobalRange)} laggards`,
+      copy: "Names trading weakest over the active chart window.",
+    };
+  }
+
+  return {
+    key: "mixed",
+    title: `${getRangeLabel(currentGlobalRange)} mixed`,
+    copy: "Names moving sideways or lacking a decisive range signal.",
+  };
+}
+
+function setCardDragState(cardEl, enabled) {
+  cardEl.draggable = enabled;
+  cardEl.style.cursor = enabled ? "grab" : "default";
+}
+
+function renderCards() {
+  cardsContainer.innerHTML = "";
+
+  if (!watchlistOrder.length) {
+    cardsContainer.className = "cards";
+    return;
+  }
+
+  const orderedCards = watchlistOrder.map((symbol) => cards.get(symbol)).filter(Boolean);
+
+  if (currentWatchlistView === "all") {
+    cardsContainer.className = "grouped-layout";
+    watchlists.forEach((watchlist) => {
+      const items = orderedCards.filter((state) => state.watchlistId === watchlist.id);
+      if (!items.length) {
+        return;
+      }
+
+      const { section, grid } = createGroupSection(
+        watchlist.name,
+        "Saved members of this watchlist.",
+        items.length
+      );
+      items.forEach((state) => {
+        setCardDragState(state.cardEl, false);
+        grid.appendChild(state.cardEl);
+      });
+      cardsContainer.appendChild(section);
+    });
+    return;
+  }
+
+  if (currentDashboardGroup === "watchlist") {
+    cardsContainer.className = "cards";
+    orderedCards.forEach((state) => {
+      setCardDragState(state.cardEl, true);
+      cardsContainer.appendChild(state.cardEl);
+    });
+    return;
+  }
+
+  cardsContainer.className = "grouped-layout";
+  const orderedKeys = ["leaders", "mixed", "laggards", "pending"];
+  const groupedStates = new Map(orderedKeys.map((key) => [key, []]));
+
+  orderedCards.forEach((state) => {
+    setCardDragState(state.cardEl, false);
+    const meta = getTrendGroupMeta(state);
+    groupedStates.get(meta.key).push({ state, meta });
+  });
+
+  orderedKeys.forEach((key) => {
+    const items = groupedStates.get(key) || [];
+    if (!items.length) {
+      return;
+    }
+
+    const { title, copy } = items[0].meta;
+    const { section, grid } = createGroupSection(title, copy, items.length);
+    items.forEach(({ state }) => grid.appendChild(state.cardEl));
+    cardsContainer.appendChild(section);
+  });
+
+  const note = document.createElement("p");
+  note.className = "group-lock-note";
+  note.textContent = `Grouped by ${getRangeLabel(currentGlobalRange)} behavior. Switch back to watchlist order to drag and persist a new sequence.`;
+  cardsContainer.appendChild(note);
+}
+
+function setDashboardGroup(group) {
+  if (group === currentDashboardGroup) {
+    return;
+  }
+
+  currentDashboardGroup = group;
+  saveDashboardGroup(group);
+  updateDashboardGroupButtons();
+  renderCards();
+  setStatus(group === "trend" ? "Dashboard grouped by shared range behavior." : "Dashboard returned to watchlist order.");
+}
+
+function initDashboardGroupTabs() {
+  dashboardGroupModes.forEach((mode) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "group-pill";
+    button.textContent = mode.label;
+    button.setAttribute("aria-pressed", "false");
+    button.addEventListener("click", () => setDashboardGroup(mode.key));
+    dashboardGroupButtons.set(mode.key, button);
+    dashboardGroupTabsEl.appendChild(button);
+  });
+  updateDashboardGroupButtons();
 }
 
 async function apiRequest(url, options = {}) {
@@ -326,7 +580,7 @@ function renderSearchResults(results) {
     button.className = "symbol-search-result";
     button.innerHTML = `
       <span class="symbol-search-primary">${result.symbol}</span>
-      <span class="symbol-search-secondary">${result.shortName}${result.exchange ? ` · ${result.exchange}` : ""}</span>
+      <span class="symbol-search-secondary">${result.shortName}${result.exchange ? ` - ${result.exchange}` : ""}</span>
     `;
     button.addEventListener("click", () => {
       input.value = result.symbol;
@@ -356,7 +610,7 @@ async function searchSymbols(query) {
 }
 
 function getCurrentCardOrder() {
-  return Array.from(cardsContainer.querySelectorAll(".quote-card")).map((card) => card.dataset.symbol);
+  return [...watchlistOrder];
 }
 
 function startAutoRefresh() {
@@ -375,7 +629,7 @@ async function persistCardOrder() {
   const symbols = getCurrentCardOrder();
   await apiRequest("/api/symbols/order", {
     method: "PUT",
-    body: JSON.stringify({ symbols }),
+    body: JSON.stringify({ watchlistId: getActiveWatchlistId(), symbols }),
   });
 }
 
@@ -393,6 +647,8 @@ function makeCard(symbol) {
   const rangeTabsEl = fragment.querySelector(".range-tabs");
   const rangeLabelEl = fragment.querySelector(".range-label");
   const errorEl = fragment.querySelector(".error-message");
+  const moveSelectEl = fragment.querySelector(".watchlist-move-select");
+  const moveButton = fragment.querySelector(".move-button");
   const removeButton = fragment.querySelector(".remove-button");
   const canvas = fragment.querySelector(".chart");
   const sideLabelsEl = fragment.querySelector(".chart-side-labels");
@@ -411,9 +667,9 @@ function makeCard(symbol) {
   let currentPayload = null;
   let currentRange = currentGlobalRange;
   let isRefreshing = false;
+  const watchlist = getWatchlistForSymbol(symbol);
 
   cardEl.dataset.symbol = symbol;
-  cardEl.draggable = true;
   updateLogo(logoEl, symbol);
   symbolEl.textContent = symbol;
   nameEl.textContent = "Loading...";
@@ -436,6 +692,28 @@ function makeCard(symbol) {
     metric52LowEl.textContent = "N/A";
     metricRangeStartEl.textContent = "N/A";
     metricPointsEl.textContent = "0";
+  }
+
+  function renderMoveControls() {
+    moveSelectEl.innerHTML = "";
+    const targetWatchlists = watchlists.filter((item) => item.id !== watchlist?.id);
+    moveButton.disabled = targetWatchlists.length === 0;
+    moveSelectEl.disabled = targetWatchlists.length === 0;
+
+    if (!targetWatchlists.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "Only watchlist";
+      moveSelectEl.appendChild(option);
+      return;
+    }
+
+    targetWatchlists.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = String(item.id);
+      option.textContent = item.name;
+      moveSelectEl.appendChild(option);
+    });
   }
 
   async function refresh(options = {}) {
@@ -478,6 +756,7 @@ function makeCard(symbol) {
       metricPointsEl.textContent = payload.points.length.toLocaleString();
       rangeLabelEl.textContent = `${getRangeLabel(payload.range)} | ${first.date} to ${latest.date}`;
       drawChart(canvas, payload, sideLabelsEl, xLabelsEl, previousCloseEl, priceTagEl);
+      renderCards();
     } catch (error) {
       nameEl.textContent = symbol;
       metaEl.textContent = "";
@@ -493,6 +772,7 @@ function makeCard(symbol) {
       errorEl.textContent = error.message;
       resetMetrics();
       canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+      renderCards();
     } finally {
       isRefreshing = false;
       updateLocalRangeButtons();
@@ -520,12 +800,38 @@ function makeCard(symbol) {
     rangeTabsEl.appendChild(button);
   });
   updateLocalRangeButtons();
+  renderMoveControls();
+
+  moveButton.addEventListener("click", async () => {
+    const targetWatchlistId = Number(moveSelectEl.value);
+    if (!targetWatchlistId) {
+      setStatus("Choose a target watchlist first.");
+      return;
+    }
+
+    try {
+      await apiRequest("/api/symbols", {
+        method: "POST",
+        body: JSON.stringify({ symbol, watchlistId: targetWatchlistId }),
+      });
+      await loadDashboardSymbols();
+      const targetName = watchlists.find((item) => item.id === targetWatchlistId)?.name || "selected watchlist";
+      setStatus(`${symbol} moved to ${targetName}.`);
+    } catch (error) {
+      setStatus(error.message);
+    }
+  });
 
   removeButton.addEventListener("click", async () => {
     try {
-      await apiRequest(`/api/symbols/${encodeURIComponent(symbol)}`, { method: "DELETE" });
+      await apiRequest(
+        `/api/symbols/${encodeURIComponent(symbol)}?watchlist=${encodeURIComponent(getWatchlistOptionValue(currentWatchlistView))}`,
+        { method: "DELETE" }
+      );
       cards.delete(symbol);
+      watchlistOrder = watchlistOrder.filter((value) => value !== symbol);
       cardEl.remove();
+      await loadDashboardSymbols();
       setStatus(`${symbol} removed.`);
     } catch (error) {
       setStatus(error.message);
@@ -533,6 +839,10 @@ function makeCard(symbol) {
   });
 
   cardEl.addEventListener("dragstart", (event) => {
+    if (currentDashboardGroup !== "watchlist" || currentWatchlistView === "all") {
+      event.preventDefault();
+      return;
+    }
     draggingSymbol = symbol;
     cardEl.classList.add("dragging");
     event.dataTransfer.effectAllowed = "move";
@@ -546,6 +856,9 @@ function makeCard(symbol) {
   });
 
   cardEl.addEventListener("dragover", (event) => {
+    if (currentDashboardGroup !== "watchlist" || currentWatchlistView === "all") {
+      return;
+    }
     if (!draggingSymbol || draggingSymbol === symbol) {
       return;
     }
@@ -559,6 +872,9 @@ function makeCard(symbol) {
   });
 
   cardEl.addEventListener("drop", async (event) => {
+    if (currentDashboardGroup !== "watchlist" || currentWatchlistView === "all") {
+      return;
+    }
     if (!draggingSymbol || draggingSymbol === symbol) {
       return;
     }
@@ -581,6 +897,7 @@ function makeCard(symbol) {
     }
 
     try {
+      watchlistOrder = Array.from(cardsContainer.querySelectorAll(".quote-card")).map((card) => card.dataset.symbol);
       await persistCardOrder();
       setStatus(`Moved ${draggingSymbol}.`);
     } catch (error) {
@@ -588,40 +905,43 @@ function makeCard(symbol) {
     }
   });
 
-  cardsContainer.append(cardEl);
   cards.set(symbol, {
+    symbol,
+    watchlistId: watchlist?.id ?? null,
     refresh,
     setRange,
     cardEl,
+    get currentPayload() {
+      return currentPayload;
+    },
     redraw() {
       if (currentPayload) {
         drawChart(canvas, currentPayload, sideLabelsEl, xLabelsEl, previousCloseEl, priceTagEl);
       }
     },
   });
+  if (!watchlistOrder.includes(symbol)) {
+    watchlistOrder.push(symbol);
+  }
+  renderCards();
   resetMetrics();
   refresh();
 }
 
 async function addSymbol(rawSymbol) {
   const symbol = normalizeSymbol(rawSymbol);
+  const watchlistId = Number(addWatchlistSelectEl.value);
   if (!symbol) {
     setStatus("Enter a stock symbol first.");
-    return;
-  }
-
-  if (cards.has(symbol)) {
-    setStatus(`${symbol} is already on the page.`);
-    cards.get(symbol).cardEl.scrollIntoView({ behavior: "smooth", block: "center" });
     return;
   }
 
   try {
     await apiRequest("/api/symbols", {
       method: "POST",
-      body: JSON.stringify({ symbol }),
+      body: JSON.stringify({ symbol, watchlistId }),
     });
-    makeCard(symbol);
+    await loadDashboardSymbols();
     setStatus(`${symbol} added.`);
     clearSearchResults();
   } catch (error) {
@@ -664,21 +984,112 @@ window.addEventListener("resize", () => {
   cards.forEach(({ redraw }) => redraw());
 });
 
+async function loadDashboardSymbols() {
+  const payload = await apiRequest(`/api/symbols?watchlist=${encodeURIComponent(getWatchlistOptionValue(currentWatchlistView))}`);
+  watchlists = payload.watchlists || [];
+  currentWatchlistView = String(payload.activeWatchlist);
+  saveWatchlistView(currentWatchlistView);
+  renderWatchlistControls();
+
+  cards.clear();
+  cardsContainer.innerHTML = "";
+  watchlistOrder = [...(payload.symbols || [])];
+
+  if (watchlistOrder.length > 0) {
+    watchlistOrder.forEach((symbol) => makeCard(symbol));
+  } else {
+    renderCards();
+    setStatus(
+      currentWatchlistView === "all"
+        ? "No saved symbols yet. Create a watchlist and add your first symbol."
+        : "This watchlist is empty. Search for a company or ticker to add a symbol."
+    );
+  }
+}
+
 async function init() {
   initGlobalRangeTabs();
+  initDashboardGroupTabs();
   startAutoRefresh();
 
   try {
-    const payload = await apiRequest("/api/symbols");
-    const symbols = payload.symbols || [];
-    if (symbols.length > 0) {
-      symbols.forEach((symbol) => makeCard(symbol));
-    } else {
-      setStatus("No saved symbols yet. Search for a company or ticker to add your first widget.");
-    }
+    await loadDashboardSymbols();
   } catch (error) {
     setStatus(error.message);
   }
 }
+
+watchlistViewSelectEl.addEventListener("change", async () => {
+  currentWatchlistView = watchlistViewSelectEl.value;
+  saveWatchlistView(currentWatchlistView);
+  try {
+    await loadDashboardSymbols();
+    setStatus(
+      currentWatchlistView === "all"
+        ? "Viewing all watchlists grouped together."
+        : `Viewing ${watchlists.find((watchlist) => String(watchlist.id) === String(currentWatchlistView))?.name || "selected watchlist"}.`
+    );
+  } catch (error) {
+    setStatus(error.message);
+  }
+});
+
+createWatchlistButton.addEventListener("click", async () => {
+  const name = window.prompt("New watchlist name");
+  if (!name) {
+    return;
+  }
+
+  try {
+    const payload = await apiRequest("/api/watchlists", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    watchlists = payload.watchlists || [];
+    currentWatchlistView = String(watchlists[watchlists.length - 1]?.id || currentWatchlistView);
+    saveWatchlistView(currentWatchlistView);
+    await loadDashboardSymbols();
+    setStatus(`Watchlist ${name.trim()} created.`);
+  } catch (error) {
+    setStatus(error.message);
+  }
+});
+
+deleteWatchlistButton.addEventListener("click", async () => {
+  const selectedWatchlist = watchlists.find((watchlist) => String(watchlist.id) === String(currentWatchlistView));
+  if (!selectedWatchlist) {
+    setStatus("Choose a specific watchlist first.");
+    return;
+  }
+
+  if (selectedWatchlist.name === "Core") {
+    setStatus("The Core watchlist cannot be deleted.");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Delete ${selectedWatchlist.name}? Its symbols will be moved back to Core.`
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    const payload = await apiRequest(`/api/watchlists/${selectedWatchlist.id}`, {
+      method: "DELETE",
+    });
+    watchlists = payload.watchlists || [];
+    currentWatchlistView = "all";
+    saveWatchlistView(currentWatchlistView);
+    await loadDashboardSymbols();
+    setStatus(
+      payload.movedSymbols?.length
+        ? `${selectedWatchlist.name} deleted. ${payload.movedSymbols.join(", ")} moved to Core.`
+        : `${selectedWatchlist.name} deleted.`
+    );
+  } catch (error) {
+    setStatus(error.message);
+  }
+});
 
 init();
