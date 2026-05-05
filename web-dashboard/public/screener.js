@@ -19,6 +19,15 @@ function setBacktestStatus(message) {
   backtestStatusEl.textContent = message || "";
 }
 
+function formatSkippedSymbols(skippedSymbols) {
+  if (!Array.isArray(skippedSymbols) || !skippedSymbols.length) {
+    return "";
+  }
+
+  const labels = skippedSymbols.map((item) => item.symbol).join(", ");
+  return `Skipped symbols: ${labels}.`;
+}
+
 function formatMoney(value, currency = "USD") {
   if (value == null || Number.isNaN(value)) {
     return "N/A";
@@ -223,7 +232,8 @@ async function loadScreen() {
   try {
     const payload = await apiRequest("/api/recommendations/technical");
     renderRecommendations(payload.recommendations || []);
-    setStatus(payload.recommendations?.length ? "Screen updated." : "");
+    const warning = formatSkippedSymbols(payload.skippedSymbols);
+    setStatus(payload.recommendations?.length ? `Screen updated. ${warning}`.trim() : warning);
   } catch (error) {
     resultsEl.innerHTML = "";
     emptyEl.classList.add("hidden");
@@ -241,7 +251,8 @@ async function loadBacktest() {
   try {
     const payload = await apiRequest("/api/backtest/technical");
     renderBacktest(payload);
-    setBacktestStatus(payload.symbols?.length ? "Backtest updated." : "");
+    const warning = formatSkippedSymbols(payload.skippedSymbols);
+    setBacktestStatus(payload.symbols?.length ? `Backtest updated. ${warning}`.trim() : warning);
   } catch (error) {
     hasBacktestData = false;
     backtestSummaryEl.innerHTML = "";

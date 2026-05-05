@@ -341,6 +341,19 @@ async function fetchHistory(symbol, range) {
   throw new Error(`Unable to load market data. ${errors.join(" | ")}`);
 }
 
+async function tryFetchHistory(symbol, range) {
+  try {
+    const history = await fetchHistory(symbol, range);
+    return { ok: true, symbol, history };
+  } catch (error) {
+    return {
+      ok: false,
+      symbol,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 function buildSearchUrl(baseUrl, query) {
   const target = new URL(`${baseUrl}/v1/finance/search`);
   target.searchParams.set("q", query);
@@ -1489,13 +1502,25 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const marketContext = await fetchBenchmarkContext(symbols, "1y");
-      const recommendations = await Promise.all(
-        symbols.map(async (symbol) =>
-          buildTechnicalRecommendation(symbol, await fetchHistory(symbol, "1y"), marketContext)
-        )
+      const historyResults = await Promise.all(symbols.map((symbol) => tryFetchHistory(symbol, "1y")));
+      const validHistories = historyResults.filter((result) => result.ok);
+      const skippedSymbols = historyResults
+        .filter((result) => !result.ok)
+        .map((result) => ({ symbol: result.symbol, error: result.error }));
+
+      if (!validHistories.length) {
+        sendJson(res, 502, {
+          error: "Unable to load market data for any saved symbols.",
+          skippedSymbols,
+        });
+        return;
+      }
+
+      const marketContext = await fetchBenchmarkContext(validHistories.map((result) => result.symbol), "1y");
+      const recommendations = validHistories.map((result) =>
+        buildTechnicalRecommendation(result.symbol, result.history, marketContext)
       );
-      sendJson(res, 200, { recommendations });
+      sendJson(res, 200, { recommendations, skippedSymbols });
     } catch (error) {
       sendJson(res, 502, { error: error.message });
     }
@@ -1514,21 +1539,38 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
+      const symbolHistoryResults = await Promise.all(
+        symbols.map((symbol) => tryFetchHistory(symbol, BACKTEST_LOOKBACK_RANGE))
+      );
+      const validSymbolHistories = symbolHistoryResults.filter((result) => result.ok);
+      const skippedSymbols = symbolHistoryResults
+        .filter((result) => !result.ok)
+        .map((result) => ({ symbol: result.symbol, error: result.error }));
+
+      if (!validSymbolHistories.length) {
+        if (requestUrl.searchParams.get("format") === "csv") {
+          sendCsv(res, 200, "technical-backtest.csv", "symbol\n");
+          return;
+        }
+        sendJson(res, 502, {
+          error: "Unable to load market data for any saved symbols.",
+          skippedSymbols,
+          summary: [],
+          directionSummary: [],
+          symbols: [],
+        });
+        return;
+      }
+
       const benchmarkSymbols = new Set([BENCHMARKS.broad, BENCHMARKS.growth]);
-      symbols.forEach((symbol) => benchmarkSymbols.add(getBenchmarkSymbolForStock(symbol)));
+      validSymbolHistories.forEach((result) => benchmarkSymbols.add(getBenchmarkSymbolForStock(result.symbol)));
 
       const benchmarkEntries = await Promise.all(
         [...benchmarkSymbols].map(async (symbol) => [symbol, await fetchHistory(symbol, BACKTEST_LOOKBACK_RANGE)])
       );
       const benchmarkHistories = Object.fromEntries(benchmarkEntries);
-
-      const symbolEntries = await Promise.all(
-        symbols.map(async (symbol) => [symbol, await fetchHistory(symbol, BACKTEST_LOOKBACK_RANGE)])
-      );
-      const symbolHistories = Object.fromEntries(symbolEntries);
-
-      const backtests = symbols.map((symbol) =>
-        backtestTechnicalHistory(symbol, symbolHistories[symbol], benchmarkHistories)
+      const backtests = validSymbolHistories.map((result) =>
+        backtestTechnicalHistory(result.symbol, result.history, benchmarkHistories)
       );
 
       const mergedBuckets = new Map();
@@ -1650,7 +1692,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      sendJson(res, 200, { summary, directionSummary, symbols: backtests });
+      sendJson(res, 200, { summary, directionSummary, symbols: backtests, skippedSymbols });
     } catch (error) {
       sendJson(res, 502, { error: error.message });
     }
