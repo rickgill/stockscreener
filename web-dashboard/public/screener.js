@@ -9,6 +9,7 @@ const backtestStatusEl = document.querySelector("#backtest-status");
 const backtestEmptyEl = document.querySelector("#backtest-empty");
 const backtestButton = document.querySelector("#run-backtest-button");
 const exportBacktestButton = document.querySelector("#export-backtest-button");
+let hasBacktestData = false;
 
 function setStatus(message) {
   statusEl.textContent = message || "";
@@ -122,6 +123,7 @@ function renderBacktest(payload) {
   const summary = payload.summary || [];
   const directionSummary = payload.directionSummary || [];
   const symbols = payload.symbols || [];
+  hasBacktestData = summary.length > 0 || directionSummary.length > 0 || symbols.length > 0;
   backtestSummaryEl.innerHTML = "";
   backtestDirectionsEl.innerHTML = "";
   backtestSymbolsEl.innerHTML = "";
@@ -241,6 +243,7 @@ async function loadBacktest() {
     renderBacktest(payload);
     setBacktestStatus(payload.symbols?.length ? "Backtest updated." : "");
   } catch (error) {
+    hasBacktestData = false;
     backtestSummaryEl.innerHTML = "";
     backtestDirectionsEl.innerHTML = "";
     backtestSymbolsEl.innerHTML = "";
@@ -253,6 +256,11 @@ async function loadBacktest() {
 }
 
 function exportBacktestCsv() {
+  if (!hasBacktestData) {
+    setBacktestStatus("Run the backtest first, then export the results.");
+    return;
+  }
+
   exportBacktestButton.disabled = true;
   setBacktestStatus("Preparing CSV export...");
   window.location.assign("/api/backtest/technical?format=csv");
@@ -265,5 +273,5 @@ function exportBacktestCsv() {
 runButton.addEventListener("click", loadScreen);
 backtestButton.addEventListener("click", loadBacktest);
 exportBacktestButton.addEventListener("click", exportBacktestCsv);
+setBacktestStatus("Backtest is available on demand. Run it when you want validation metrics.");
 loadScreen();
-loadBacktest();
