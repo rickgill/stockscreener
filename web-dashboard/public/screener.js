@@ -88,6 +88,34 @@ async function apiRequest(url) {
   return payload;
 }
 
+function appendRecommendationCard(item) {
+  const article = document.createElement("article");
+  article.className = "analysis-card";
+  article.innerHTML = `
+    <div class="analysis-head">
+      <div>
+        <p class="field-label">${item.symbol}</p>
+        <h2>${item.shortName || item.symbol}</h2>
+      </div>
+      <div class="signal-chip ${recommendationClass(item.recommendation)}">${item.recommendation}</div>
+    </div>
+    <p class="analysis-score">Score ${item.score} - Confidence ${item.confidence}</p>
+    <div class="metric-strip">
+      <span>${formatMoney(item.metrics.price)}</span>
+      <span>1D ${formatPercent(item.metrics.oneDayChangePct)}</span>
+      <span>1M ${formatPercent(item.metrics.monthReturnPct)}</span>
+      <span>RSI ${item.metrics.rsi14 == null ? "N/A" : item.metrics.rsi14.toFixed(1)}</span>
+      <span>5D Hit ${formatHitRate(item.metrics.hitRate5d)}</span>
+      <span>20D Exp ${formatPercent(item.metrics.expectedReturn20d)}</span>
+      <span>ATR Stop ${formatPercent(item.metrics.stopDistancePct)}</span>
+    </div>
+    <ul class="analysis-notes">
+      ${item.summary.map((note) => `<li>${note}</li>`).join("")}
+    </ul>
+  `;
+  resultsEl.appendChild(article);
+}
+
 function renderRecommendations(recommendations) {
   resultsEl.innerHTML = "";
 
@@ -97,35 +125,26 @@ function renderRecommendations(recommendations) {
   }
 
   emptyEl.classList.add("hidden");
-  recommendations
-    .sort((left, right) => right.score - left.score)
-    .forEach((item) => {
-      const article = document.createElement("article");
-      article.className = "analysis-card";
-      article.innerHTML = `
-        <div class="analysis-head">
-          <div>
-            <p class="field-label">${item.symbol}</p>
-            <h2>${item.shortName || item.symbol}</h2>
-          </div>
-          <div class="signal-chip ${recommendationClass(item.recommendation)}">${item.recommendation}</div>
-        </div>
-        <p class="analysis-score">Score ${item.score} · Confidence ${item.confidence}</p>
-        <div class="metric-strip">
-          <span>${formatMoney(item.metrics.price)}</span>
-          <span>1D ${formatPercent(item.metrics.oneDayChangePct)}</span>
-          <span>1M ${formatPercent(item.metrics.monthReturnPct)}</span>
-          <span>RSI ${item.metrics.rsi14 == null ? "N/A" : item.metrics.rsi14.toFixed(1)}</span>
-          <span>5D Hit ${formatHitRate(item.metrics.hitRate5d)}</span>
-          <span>20D Exp ${formatPercent(item.metrics.expectedReturn20d)}</span>
-          <span>ATR Stop ${formatPercent(item.metrics.stopDistancePct)}</span>
-        </div>
-        <ul class="analysis-notes">
-          ${item.summary.map((note) => `<li>${note}</li>`).join("")}
-        </ul>
-      `;
-      resultsEl.appendChild(article);
-    });
+  recommendations.forEach((item) => appendRecommendationCard(item));
+}
+
+function renderSkippedRecommendationCard(symbol, error) {
+  const article = document.createElement("article");
+  article.className = "analysis-card";
+  article.innerHTML = `
+    <div class="analysis-head">
+      <div>
+        <p class="field-label">${symbol}</p>
+        <h2>${symbol}</h2>
+      </div>
+      <div class="signal-chip">Skipped</div>
+    </div>
+    <p class="analysis-score">No recommendation generated for this saved dashboard symbol.</p>
+    <ul class="analysis-notes">
+      <li>${error || "Market data was unavailable for this symbol."}</li>
+    </ul>
+  `;
+  resultsEl.appendChild(article);
 }
 
 function renderBacktest(payload) {
@@ -231,9 +250,30 @@ async function loadScreen() {
 
   try {
     const payload = await apiRequest("/api/recommendations/technical");
-    renderRecommendations(payload.recommendations || []);
+    const requestedSymbols = payload.requestedSymbols || [];
+    const recommendations = payload.recommendations || [];
+    const skippedSymbols = payload.skippedSymbols || [];
+    const recommendationBySymbol = new Map(recommendations.map((item) => [item.symbol, item]));
+    const skippedBySymbol = new Map(skippedSymbols.map((item) => [item.symbol, item.error]));
+
+    resultsEl.innerHTML = "";
+    if (!requestedSymbols.length) {
+      renderRecommendations([]);
+    } else {
+      emptyEl.classList.add("hidden");
+      requestedSymbols.forEach((symbol) => {
+        const recommendation = recommendationBySymbol.get(symbol);
+        if (recommendation) {
+          appendRecommendationCard(recommendation);
+          return;
+        }
+
+        renderSkippedRecommendationCard(symbol, skippedBySymbol.get(symbol));
+      });
+    }
+
     const warning = formatSkippedSymbols(payload.skippedSymbols);
-    setStatus(payload.recommendations?.length ? `Screen updated. ${warning}`.trim() : warning);
+    setStatus(recommendations.length ? `Screen updated. ${warning}`.trim() : warning);
   } catch (error) {
     resultsEl.innerHTML = "";
     emptyEl.classList.add("hidden");

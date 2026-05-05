@@ -42,7 +42,7 @@ function createChartCard(item, index) {
   article.innerHTML = `
     <div class="analysis-head">
       <div>
-        <p class="field-label">#${index + 1} · ${item.symbol}</p>
+        <p class="field-label">#${index + 1} - ${item.symbol}</p>
         <h2>${item.shortName || item.symbol}</h2>
       </div>
       <div class="signal-chip ${recommendationClass(item.recommendation)}">${item.recommendation}</div>

@@ -1520,7 +1520,11 @@ const server = http.createServer(async (req, res) => {
       const recommendations = validHistories.map((result) =>
         buildTechnicalRecommendation(result.symbol, result.history, marketContext)
       );
-      sendJson(res, 200, { recommendations, skippedSymbols });
+      sendJson(res, 200, {
+        requestedSymbols: symbols,
+        recommendations,
+        skippedSymbols,
+      });
     } catch (error) {
       sendJson(res, 502, { error: error.message });
     }
@@ -1692,7 +1696,13 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      sendJson(res, 200, { summary, directionSummary, symbols: backtests, skippedSymbols });
+      sendJson(res, 200, {
+        requestedSymbols: symbols,
+        summary,
+        directionSummary,
+        symbols: backtests,
+        skippedSymbols,
+      });
     } catch (error) {
       sendJson(res, 502, { error: error.message });
     }

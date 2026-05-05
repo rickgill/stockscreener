@@ -47,7 +47,7 @@ function createChartCard(item) {
       </div>
       <div class="signal-chip ${recommendationClass(item.recommendation)}">${item.recommendation}</div>
     </div>
-    <p class="analysis-score">Flow score ${item.score} · Confidence ${item.confidence}</p>
+    <p class="analysis-score">Flow score ${item.score} - Confidence ${item.confidence}</p>
     <div class="metric-strip">
       <span>${SignalCharts.formatMoney(item.metrics.price)}</span>
       <span>Volume ${item.metrics.latestVolume?.toLocaleString?.() || "N/A"}</span>
