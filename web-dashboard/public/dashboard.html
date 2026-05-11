@@ -13,6 +13,8 @@
         <nav class="site-nav-links" aria-label="Primary">
           <a class="active" href="/dashboard">Dashboard</a>
           <a href="/screener">Signal Screener</a>
+          <a href="/short-term">Short-Term Setups</a>
+          <a href="/market-chat">Market Chat</a>
           <a href="/institutional-flow">Institutional Flow</a>
           <a href="/trending">Trending</a>
         </nav>
@@ -90,6 +92,24 @@
           </div>
         </div>
         <div id="dashboard-group-tabs" class="group-tabs" role="group" aria-label="Dashboard grouping options"></div>
+      </section>
+      <section class="grouping-bar control-panel">
+        <div class="range-panel-head">
+          <div>
+            <p class="field-label">Dashboard view</p>
+            <p class="range-copy">Switch between chart cards and an all-symbol table for the active range.</p>
+          </div>
+        </div>
+        <div id="dashboard-view-tabs" class="group-tabs" role="group" aria-label="Dashboard view options"></div>
+      </section>
+      <section id="dashboard-table-range-panel" class="grouping-bar control-panel dashboard-table-range-panel hidden">
+        <div class="range-panel-head">
+          <div>
+            <p class="field-label">Table range select</p>
+            <p class="range-copy">Same shared range, placed here for faster table review.</p>
+          </div>
+        </div>
+        <div id="table-range-tabs" class="global-range-tabs" role="group" aria-label="Table chart range options"></div>
       </section>
       <section id="cards" class="cards"></section>
     </main>

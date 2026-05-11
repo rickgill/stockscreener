@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Market Command Market Chat</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="market-chat-page">
+    <main class="page-shell market-chat-shell">
+      <header class="site-nav">
+        <a class="brand-mark" href="/">Market Command</a>
+        <nav class="site-nav-links" aria-label="Primary">
+          <a href="/dashboard">Dashboard</a>
+          <a href="/screener">Signal Screener</a>
+          <a href="/short-term">Short-Term Setups</a>
+          <a class="active" href="/market-chat">Market Chat</a>
+          <a href="/institutional-flow">Institutional Flow</a>
+          <a href="/trending">Trending</a>
+        </nav>
+      </header>
+
+      <section class="subpage-hero">
+        <div>
+          <p class="eyebrow">Conversational stock review</p>
+          <h1>Market Chat</h1>
+          <p class="hero-copy">
+            Ask about a ticker or company name and get a grounded read on the next few days from
+            trend, headlines, and supply-demand behavior.
+          </p>
+        </div>
+        <div class="subpage-actions">
+          <button id="new-chat-button" type="button">New Chat</button>
+          <button id="clear-chat-button" class="ghost-button" type="button">Clear Current Chat</button>
+        </div>
+      </section>
+
+      <section class="chat-layout">
+        <aside class="chat-history-panel">
+          <section class="control-panel">
+            <div class="chat-history-head">
+              <div>
+                <p class="field-label">Conversations</p>
+                <p class="range-copy">Your previous stock discussions stay here.</p>
+              </div>
+            </div>
+            <div id="chat-history-list" class="chat-history-list"></div>
+          </section>
+          <section class="control-panel">
+            <p class="field-label">Prompt ideas</p>
+            <div id="prompt-suggestions" class="prompt-suggestions"></div>
+          </section>
+        </aside>
+
+        <section class="chat-panel">
+          <section class="chat-thread-panel">
+            <div class="chat-thread-head">
+              <div>
+                <p class="field-label">Active chat</p>
+                <h2 id="active-chat-title" class="chat-thread-title">New Chat</h2>
+              </div>
+            </div>
+          <section class="note-banner chat-note-banner">
+            Responses here are rule-based and tied to the app's data sources. They summarize momentum,
+            volume, relative strength, and recent headlines. They are not guaranteed predictions.
+          </section>
+          <div id="chat-thread" class="chat-thread" aria-live="polite"></div>
+          </section>
+          <form id="chat-form" class="chat-composer">
+            <label class="field-label" for="chat-input">Ask about a stock</label>
+            <div class="chat-input-row">
+              <input
+                id="chat-input"
+                type="text"
+                placeholder="Example: What do the next few days look like for NVDA?"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button id="send-chat-button" type="submit">Ask</button>
+            </div>
+          </form>
+        </section>
+
+        <aside class="chat-sidebar">
+          <section class="control-panel">
+            <p class="field-label">What this uses</p>
+            <ul class="analysis-notes compact-notes">
+              <li>Short-term setup engine</li>
+              <li>Broader technical trend context</li>
+              <li>Recent Yahoo Finance headline data</li>
+              <li>Volume-based supply and demand inference</li>
+            </ul>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <script src="/market-chat.js"></script>
+  </body>
+</html>

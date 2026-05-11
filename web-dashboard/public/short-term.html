@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Market Command Short-Term Setups</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="site-nav">
+        <a class="brand-mark" href="/">Market Command</a>
+        <nav class="site-nav-links" aria-label="Primary">
+          <a href="/dashboard">Dashboard</a>
+          <a href="/screener">Signal Screener</a>
+          <a class="active" href="/short-term">Short-Term Setups</a>
+          <a href="/market-chat">Market Chat</a>
+          <a href="/institutional-flow">Institutional Flow</a>
+          <a href="/trending">Trending</a>
+        </nav>
+      </header>
+
+      <section class="subpage-hero">
+        <div>
+          <p class="eyebrow">1D to 5D trade ideas</p>
+          <h1>Short-Term Setups</h1>
+          <p class="hero-copy">
+            This page ranks your saved symbols for breakout, pullback, continuation, and failed-bounce
+            setups with trigger, stop, target, and short-horizon hit-rate context.
+          </p>
+        </div>
+        <div class="subpage-actions">
+          <button id="run-short-term-button" type="button">Refresh Setups</button>
+        </div>
+      </section>
+
+      <section class="note-banner">
+        Use this page for short-horizon trades only. It is optimized for fast follow-through,
+        liquidity, relative volume, and trend alignment rather than longer swing setups.
+      </section>
+      <section class="grouping-bar control-panel">
+        <div class="range-panel-head">
+          <div>
+            <p class="field-label">Watchlist view</p>
+            <p class="range-copy">Run one watchlist or scan all of them grouped by watchlist.</p>
+          </div>
+        </div>
+        <div class="watchlist-view-row">
+          <select id="short-term-watchlist-select"></select>
+        </div>
+      </section>
+      <section class="grouping-bar control-panel">
+        <div class="range-panel-head">
+          <div>
+            <p class="field-label">Setup grouping</p>
+            <p class="range-copy">Switch between watchlist order and action-priority buckets.</p>
+          </div>
+        </div>
+        <div id="short-term-group-tabs" class="group-tabs" role="group" aria-label="Short-term grouping options"></div>
+      </section>
+      <section class="global-range-bar analysis-range-bar">
+        <div>
+          <p class="field-label">Global chart range</p>
+          <div id="short-term-range-tabs" class="global-range-tabs" role="group" aria-label="Short-term chart range options"></div>
+        </div>
+      </section>
+      <section id="short-term-status" class="status" aria-live="polite"></section>
+      <section id="short-term-empty" class="empty-state hidden">
+        Add symbols on the dashboard first, then return here to rank short-term setups.
+      </section>
+      <section id="short-term-results" class="analysis-grid short-term-results-grid"></section>
+    </main>
+
+    <script src="/signal-charts.js"></script>
+    <script src="/short-term.js"></script>
+  </body>
+</html>

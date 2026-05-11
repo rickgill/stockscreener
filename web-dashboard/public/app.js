@@ -4,7 +4,10 @@ const cardsContainer = document.querySelector("#cards");
 const statusEl = document.querySelector("#status");
 const template = document.querySelector("#card-template");
 const globalRangeTabsEl = document.querySelector("#global-range-tabs");
+const tableRangeTabsEl = document.querySelector("#table-range-tabs");
 const dashboardGroupTabsEl = document.querySelector("#dashboard-group-tabs");
+const dashboardViewTabsEl = document.querySelector("#dashboard-view-tabs");
+const dashboardTableRangePanelEl = document.querySelector("#dashboard-table-range-panel");
 const addWatchlistSelectEl = document.querySelector("#add-watchlist-select");
 const watchlistViewSelectEl = document.querySelector("#watchlist-view-select");
 const createWatchlistButton = document.querySelector("#create-watchlist-button");
@@ -12,6 +15,7 @@ const deleteWatchlistButton = document.querySelector("#delete-watchlist-button")
 const searchResultsEl = document.querySelector("#symbol-search-results");
 const rangeStorageKey = "stock-dashboard-global-range";
 const dashboardGroupStorageKey = "stock-dashboard-grouping";
+const dashboardViewStorageKey = "stock-dashboard-view";
 const dashboardWatchlistStorageKey = "stock-dashboard-watchlist-view";
 const rangePresets = [
   { key: "1d", label: "1D" },
@@ -27,17 +31,25 @@ const rangePresets = [
 ];
 const defaultRange = "1d";
 const defaultDashboardGroup = "watchlist";
+const defaultDashboardView = "cards";
 const autoRefreshMs = 10000;
 const dashboardGroupModes = [
   { key: "watchlist", label: "Watchlist order" },
   { key: "trend", label: "Trend buckets" },
 ];
+const dashboardViewModes = [
+  { key: "cards", label: "Cards" },
+  { key: "table", label: "Table" },
+];
 
 const cards = new Map();
 const globalRangeButtons = new Map();
+const tableRangeButtons = new Map();
 const dashboardGroupButtons = new Map();
+const dashboardViewButtons = new Map();
 let currentGlobalRange = loadRange();
 let currentDashboardGroup = loadDashboardGroup();
+let currentDashboardView = loadDashboardView();
 let currentWatchlistView = loadWatchlistView();
 let draggingSymbol = null;
 let searchDebounceTimer = null;
@@ -98,6 +110,15 @@ function saveDashboardGroup(group) {
 function loadDashboardGroup() {
   const value = localStorage.getItem(dashboardGroupStorageKey) || defaultDashboardGroup;
   return dashboardGroupModes.some((mode) => mode.key === value) ? value : defaultDashboardGroup;
+}
+
+function saveDashboardView(view) {
+  localStorage.setItem(dashboardViewStorageKey, view);
+}
+
+function loadDashboardView() {
+  const value = localStorage.getItem(dashboardViewStorageKey) || defaultDashboardView;
+  return dashboardViewModes.some((mode) => mode.key === value) ? value : defaultDashboardView;
 }
 
 function saveWatchlistView(value) {
@@ -351,6 +372,10 @@ function updateGlobalRangeButtons() {
     button.classList.toggle("active", key === currentGlobalRange);
     button.setAttribute("aria-pressed", String(key === currentGlobalRange));
   });
+  tableRangeButtons.forEach((button, key) => {
+    button.classList.toggle("active", key === currentGlobalRange);
+    button.setAttribute("aria-pressed", String(key === currentGlobalRange));
+  });
 }
 
 function setGlobalRange(range) {
@@ -362,7 +387,7 @@ function setGlobalRange(range) {
   saveRange(range);
   updateGlobalRangeButtons();
   cards.forEach(({ setRange }) => setRange(range, { fromGlobal: true }));
-  renderCards();
+  renderDashboardContent();
   setStatus(`Global range changed to ${getRangeLabel(range)}.`);
 }
 
@@ -377,6 +402,18 @@ function initGlobalRangeTabs() {
     globalRangeButtons.set(preset.key, button);
     globalRangeTabsEl.appendChild(button);
   });
+
+  rangePresets.forEach((preset) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "range-pill";
+    button.textContent = preset.label;
+    button.setAttribute("aria-pressed", "false");
+    button.addEventListener("click", () => setGlobalRange(preset.key));
+    tableRangeButtons.set(preset.key, button);
+    tableRangeTabsEl.appendChild(button);
+  });
+
   updateGlobalRangeButtons();
 }
 
@@ -384,6 +421,13 @@ function updateDashboardGroupButtons() {
   dashboardGroupButtons.forEach((button, key) => {
     button.classList.toggle("active", key === currentDashboardGroup);
     button.setAttribute("aria-pressed", String(key === currentDashboardGroup));
+  });
+}
+
+function updateDashboardViewButtons() {
+  dashboardViewButtons.forEach((button, key) => {
+    button.classList.toggle("active", key === currentDashboardView);
+    button.setAttribute("aria-pressed", String(key === currentDashboardView));
   });
 }
 
@@ -447,8 +491,116 @@ function setCardDragState(cardEl, enabled) {
   cardEl.style.cursor = enabled ? "grab" : "default";
 }
 
-function renderCards() {
+function buildTableRows(states) {
+  return states
+    .map((state) => {
+      const payload = state.currentPayload;
+      const watchlist = watchlists.find((item) => item.id === state.watchlistId);
+
+      if (!payload?.points?.length) {
+        return `
+          <tr>
+            <td><strong>${state.symbol}</strong></td>
+            <td>${watchlist?.name || "N/A"}</td>
+            <td colspan="7">Loading market data...</td>
+          </tr>
+        `;
+      }
+
+      const first = payload.points[0];
+      const latest = payload.points[payload.points.length - 1];
+      const previousClose = payload.stats.previousClose;
+      const rangeChangePct = first?.close ? ((latest.close - first.close) / first.close) * 100 : null;
+      const todayChangePct = previousClose ? ((latest.close - previousClose) / previousClose) * 100 : null;
+
+      return `
+        <tr>
+          <td><strong>${state.symbol}</strong></td>
+          <td>${payload.shortName || state.symbol}</td>
+          <td>${watchlist?.name || "N/A"}</td>
+          <td>${formatMoney(latest.close, payload.currency)}</td>
+          <td class="${(rangeChangePct || 0) >= 0 ? "positive" : "negative"}">${formatPercent(rangeChangePct)}</td>
+          <td class="${(todayChangePct || 0) >= 0 ? "positive" : "negative"}">${formatPercent(todayChangePct)}</td>
+          <td>${first.date}</td>
+          <td>${latest.date}</td>
+          <td>${payload.points.length.toLocaleString()}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderTableView(orderedCards) {
+  cardsContainer.className = "dashboard-table-layout";
+  dashboardTableRangePanelEl.classList.remove("hidden");
+
+  if (currentWatchlistView === "all") {
+    watchlists.forEach((watchlist) => {
+      const items = orderedCards.filter((state) => state.watchlistId === watchlist.id);
+      if (!items.length) {
+        return;
+      }
+
+      const section = document.createElement("section");
+      section.className = "group-section";
+      section.innerHTML = `
+        <div class="group-section-head">
+          <div>
+            <h2 class="group-section-title">${watchlist.name}</h2>
+            <p class="group-section-copy">Table view for the active ${getRangeLabel(currentGlobalRange)} range.</p>
+          </div>
+          <span class="group-section-count">${items.length} ${items.length === 1 ? "name" : "names"}</span>
+        </div>
+        <div class="dashboard-table-shell">
+          <table class="dashboard-table">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Name</th>
+                <th>Watchlist</th>
+                <th>Price</th>
+                <th>${getRangeLabel(currentGlobalRange)}</th>
+                <th>Today</th>
+                <th>Start</th>
+                <th>Latest</th>
+                <th>Points</th>
+              </tr>
+            </thead>
+            <tbody>${buildTableRows(items)}</tbody>
+          </table>
+        </div>
+      `;
+      cardsContainer.appendChild(section);
+    });
+    return;
+  }
+
+  const shell = document.createElement("section");
+  shell.className = "dashboard-table-shell";
+  shell.innerHTML = `
+    <table class="dashboard-table">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>Name</th>
+          <th>Watchlist</th>
+          <th>Price</th>
+          <th>${getRangeLabel(currentGlobalRange)}</th>
+          <th>Today</th>
+          <th>Start</th>
+          <th>Latest</th>
+          <th>Points</th>
+        </tr>
+      </thead>
+      <tbody>${buildTableRows(orderedCards)}</tbody>
+    </table>
+  `;
+  cardsContainer.appendChild(shell);
+}
+
+function renderDashboardContent() {
   cardsContainer.innerHTML = "";
+  dashboardTableRangePanelEl.classList.toggle("hidden", currentDashboardView !== "table");
 
   if (!watchlistOrder.length) {
     cardsContainer.className = "cards";
@@ -456,6 +608,11 @@ function renderCards() {
   }
 
   const orderedCards = watchlistOrder.map((symbol) => cards.get(symbol)).filter(Boolean);
+
+  if (currentDashboardView === "table") {
+    renderTableView(orderedCards);
+    return;
+  }
 
   if (currentWatchlistView === "all") {
     cardsContainer.className = "grouped-layout";
@@ -524,7 +681,7 @@ function setDashboardGroup(group) {
   currentDashboardGroup = group;
   saveDashboardGroup(group);
   updateDashboardGroupButtons();
-  renderCards();
+  renderDashboardContent();
   setStatus(group === "trend" ? "Dashboard grouped by shared range behavior." : "Dashboard returned to watchlist order.");
 }
 
@@ -540,6 +697,32 @@ function initDashboardGroupTabs() {
     dashboardGroupTabsEl.appendChild(button);
   });
   updateDashboardGroupButtons();
+}
+
+function setDashboardView(view) {
+  if (view === currentDashboardView) {
+    return;
+  }
+
+  currentDashboardView = view;
+  saveDashboardView(view);
+  updateDashboardViewButtons();
+  renderDashboardContent();
+  setStatus(view === "table" ? "Dashboard switched to table view." : "Dashboard returned to card view.");
+}
+
+function initDashboardViewTabs() {
+  dashboardViewModes.forEach((mode) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "group-pill";
+    button.textContent = mode.label;
+    button.setAttribute("aria-pressed", "false");
+    button.addEventListener("click", () => setDashboardView(mode.key));
+    dashboardViewButtons.set(mode.key, button);
+    dashboardViewTabsEl.appendChild(button);
+  });
+  updateDashboardViewButtons();
 }
 
 async function apiRequest(url, options = {}) {
@@ -756,7 +939,7 @@ function makeCard(symbol) {
       metricPointsEl.textContent = payload.points.length.toLocaleString();
       rangeLabelEl.textContent = `${getRangeLabel(payload.range)} | ${first.date} to ${latest.date}`;
       drawChart(canvas, payload, sideLabelsEl, xLabelsEl, previousCloseEl, priceTagEl);
-      renderCards();
+      renderDashboardContent();
     } catch (error) {
       nameEl.textContent = symbol;
       metaEl.textContent = "";
@@ -772,7 +955,7 @@ function makeCard(symbol) {
       errorEl.textContent = error.message;
       resetMetrics();
       canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
-      renderCards();
+      renderDashboardContent();
     } finally {
       isRefreshing = false;
       updateLocalRangeButtons();
@@ -923,7 +1106,7 @@ function makeCard(symbol) {
   if (!watchlistOrder.includes(symbol)) {
     watchlistOrder.push(symbol);
   }
-  renderCards();
+  renderDashboardContent();
   resetMetrics();
   refresh();
 }
@@ -998,7 +1181,7 @@ async function loadDashboardSymbols() {
   if (watchlistOrder.length > 0) {
     watchlistOrder.forEach((symbol) => makeCard(symbol));
   } else {
-    renderCards();
+    renderDashboardContent();
     setStatus(
       currentWatchlistView === "all"
         ? "No saved symbols yet. Create a watchlist and add your first symbol."
@@ -1010,6 +1193,7 @@ async function loadDashboardSymbols() {
 async function init() {
   initGlobalRangeTabs();
   initDashboardGroupTabs();
+  initDashboardViewTabs();
   startAutoRefresh();
 
   try {

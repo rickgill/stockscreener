@@ -42,6 +42,8 @@ const STATIC_ROUTE_ALIASES = {
   "/": "/index.html",
   "/dashboard": "/dashboard.html",
   "/screener": "/screener.html",
+  "/short-term": "/short-term.html",
+  "/market-chat": "/market-chat.html",
   "/institutional-flow": "/institutional-flow.html",
   "/trending": "/trending.html",
 };
@@ -477,11 +479,11 @@ async function tryFetchHistory(symbol, range) {
   }
 }
 
-function buildSearchUrl(baseUrl, query) {
+function buildSearchUrl(baseUrl, query, options = {}) {
   const target = new URL(`${baseUrl}/v1/finance/search`);
   target.searchParams.set("q", query);
-  target.searchParams.set("quotesCount", "8");
-  target.searchParams.set("newsCount", "0");
+  target.searchParams.set("quotesCount", String(options.quotesCount ?? 8));
+  target.searchParams.set("newsCount", String(options.newsCount ?? 0));
   target.searchParams.set("enableFuzzyQuery", "false");
   target.searchParams.set("quotesQueryId", "tss_match_phrase_query");
   target.searchParams.set("multiQuoteQueryId", "multi_quote_single_token_query");
@@ -489,11 +491,11 @@ function buildSearchUrl(baseUrl, query) {
   return target;
 }
 
-async function fetchSearchResults(query) {
+async function fetchSearchPayload(query, options = {}) {
   const errors = [];
 
   for (const baseUrl of YAHOO_SEARCH_HOSTS) {
-    const target = buildSearchUrl(baseUrl, query);
+    const target = buildSearchUrl(baseUrl, query, options);
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 12000);
@@ -510,15 +512,7 @@ async function fetchSearchResults(query) {
           throw new Error(`Search request failed with status ${response.status}.`);
         }
 
-        const payload = await response.json();
-        return (payload.quotes || [])
-          .filter((quote) => quote.symbol && !quote.symbol.includes("="))
-          .map((quote) => ({
-            symbol: quote.symbol,
-            shortName: quote.shortname || quote.longname || quote.symbol,
-            exchange: quote.exchange || quote.exchDisp || "",
-            type: quote.quoteType || "",
-          }));
+        return await response.json();
       } finally {
         clearTimeout(timeout);
       }
@@ -529,7 +523,19 @@ async function fetchSearchResults(query) {
     }
   }
 
-  throw new Error(`Unable to search symbols. ${errors.join(" | ")}`);
+  throw new Error(`Unable to search data. ${errors.join(" | ")}`);
+}
+
+async function fetchSearchResults(query) {
+  const payload = await fetchSearchPayload(query, { quotesCount: 8, newsCount: 0 });
+  return (payload.quotes || [])
+    .filter((quote) => quote.symbol && !quote.symbol.includes("="))
+    .map((quote) => ({
+      symbol: quote.symbol,
+      shortName: quote.shortname || quote.longname || quote.symbol,
+      exchange: quote.exchange || quote.exchDisp || "",
+      type: quote.quoteType || "",
+    }));
 }
 
 function getNumber(value) {
@@ -1177,6 +1183,452 @@ function buildTechnicalRecommendation(symbol, history, marketContext = null, opt
   };
 }
 
+function getCloseFromSessionsAgo(closes, sessionsAgo, fallbackValue = null) {
+  return closes[Math.max(0, closes.length - 1 - sessionsAgo)] ?? fallbackValue;
+}
+
+function averageDollarVolume(avgVolume, price) {
+  if (avgVolume == null || price == null) {
+    return null;
+  }
+
+  return avgVolume * price;
+}
+
+function classifyActionPriority(score, bias, setupType, flags, regime) {
+  const actionableSetup = !["Range Watch", "Oversold Bounce Watch", "Failed Bounce Watch"].includes(setupType);
+  const blockedLong = bias === "Long" && regime === "risk_off";
+  const blockedShort = bias === "Short" && regime === "risk_on";
+
+  if (flags.lowLiquidity || !bias || bias === "Neutral") {
+    return "Avoid";
+  }
+
+  if (flags.tooExtended || blockedLong || blockedShort) {
+    return Math.abs(score) >= 5 ? "Watch Only" : "Avoid";
+  }
+
+  if (Math.abs(score) >= 8 && actionableSetup) {
+    return "Action Now";
+  }
+
+  if (Math.abs(score) >= 5 && actionableSetup) {
+    return "Near Trigger";
+  }
+
+  if (Math.abs(score) >= 3) {
+    return "Watch Only";
+  }
+
+  return "Avoid";
+}
+
+function buildShortTermState(points) {
+  const closes = points.map((point) => point.close).filter((value) => value != null);
+  const volumes = points.map((point) => point.volume || 0);
+  const latest = points[points.length - 1];
+  const previous = points[points.length - 2] || latest;
+  const latestClose = latest?.close ?? null;
+  const sma20 = sma(closes, 20);
+  const sma50 = sma(closes, 50);
+  const ema8 = ema(closes, 8);
+  const rsi14 = rsi(closes, 14);
+  const avgVolume20 = average(volumes.slice(-20));
+  const atr14 = computeAtr(points, 14);
+  const recentHigh20 = closes.slice(-20).length ? Math.max(...closes.slice(-20)) : latestClose;
+  const recentLow20 = closes.slice(-20).length ? Math.min(...closes.slice(-20)) : latestClose;
+  const close3d = getCloseFromSessionsAgo(closes, 3, latestClose);
+  const close5d = getCloseFromSessionsAgo(closes, 5, latestClose);
+  const close20d = getCloseFromSessionsAgo(closes, 20, latestClose);
+  const oneDayChangePct = previous?.close ? ((latestClose - previous.close) / previous.close) * 100 : null;
+  const return3dPct = close3d ? ((latestClose - close3d) / close3d) * 100 : null;
+  const return5dPct = close5d ? ((latestClose - close5d) / close5d) * 100 : null;
+  const return20dPct = close20d ? ((latestClose - close20d) / close20d) * 100 : null;
+  const volumeRatio20 = avgVolume20 ? latest.volume / avgVolume20 : null;
+  const distFromBreakoutPct = recentHigh20 ? ((recentHigh20 - latestClose) / latestClose) * 100 : null;
+  const distFromBreakdownPct = recentLow20 ? ((latestClose - recentLow20) / latestClose) * 100 : null;
+  const distFromSma20Pct = sma20 ? ((latestClose - sma20) / sma20) * 100 : null;
+  const distFromEma8Pct = ema8 ? ((latestClose - ema8) / ema8) * 100 : null;
+  const avgDollarVolume20 = averageDollarVolume(avgVolume20, latestClose);
+  const notes = [];
+  let longScore = 0;
+  let shortScore = 0;
+
+  if (sma20 != null && latestClose > sma20) {
+    longScore += 2;
+    notes.push("Price is above the 20-day trend.");
+  } else if (sma20 != null) {
+    shortScore += 2;
+    notes.push("Price is below the 20-day trend.");
+  }
+
+  if (sma50 != null && latestClose > sma50) {
+    longScore += 1;
+  } else if (sma50 != null) {
+    shortScore += 1;
+  }
+
+  if (ema8 != null && sma20 != null && ema8 > sma20) {
+    longScore += 1;
+  } else if (ema8 != null && sma20 != null && ema8 < sma20) {
+    shortScore += 1;
+  }
+
+  if (return3dPct != null && return3dPct >= 2) {
+    longScore += 1;
+  } else if (return3dPct != null && return3dPct <= -2) {
+    shortScore += 1;
+  }
+
+  if (return5dPct != null && return5dPct >= 4) {
+    longScore += 2;
+    notes.push(`Five-day trend is strong at ${formatPercent(return5dPct)}.`);
+  } else if (return5dPct != null && return5dPct <= -4) {
+    shortScore += 2;
+    notes.push(`Five-day trend is weak at ${formatPercent(return5dPct)}.`);
+  }
+
+  if (volumeRatio20 != null && volumeRatio20 >= 1.2 && (oneDayChangePct || 0) > 0) {
+    longScore += volumeRatio20 >= 1.8 ? 2 : 1;
+    notes.push(`Relative volume is elevated at ${volumeRatio20.toFixed(1)}x on an up session.`);
+  } else if (volumeRatio20 != null && volumeRatio20 >= 1.2 && (oneDayChangePct || 0) < 0) {
+    shortScore += volumeRatio20 >= 1.8 ? 2 : 1;
+    notes.push(`Relative volume is elevated at ${volumeRatio20.toFixed(1)}x on a down session.`);
+  }
+
+  if (rsi14 != null && rsi14 >= 54 && rsi14 <= 70) {
+    longScore += 1;
+  } else if (rsi14 != null && rsi14 <= 46 && rsi14 >= 30) {
+    shortScore += 1;
+  }
+
+  const longBreakoutReady = distFromBreakoutPct != null && distFromBreakoutPct <= 1.2 && latestClose >= (recentHigh20 || 0) * 0.988;
+  const shortBreakdownReady =
+    distFromBreakdownPct != null && distFromBreakdownPct <= 1.2 && latestClose <= (recentLow20 || 0) * 1.012;
+  const longPullbackReady =
+    sma20 != null &&
+    sma50 != null &&
+    latestClose > sma50 &&
+    distFromSma20Pct != null &&
+    distFromSma20Pct >= -2 &&
+    distFromSma20Pct <= 1.5 &&
+    (return20dPct || 0) > 0;
+  const shortBounceFailReady =
+    sma20 != null &&
+    sma50 != null &&
+    latestClose < sma50 &&
+    distFromSma20Pct != null &&
+    distFromSma20Pct <= 2 &&
+    distFromSma20Pct >= -1.5 &&
+    (return20dPct || 0) < 0;
+  const longMomentumReady =
+    (return5dPct || 0) >= 5 &&
+    (volumeRatio20 || 0) >= 1.1 &&
+    sma20 != null &&
+    latestClose > sma20;
+  const shortMomentumReady =
+    (return5dPct || 0) <= -5 &&
+    (volumeRatio20 || 0) >= 1.1 &&
+    sma20 != null &&
+    latestClose < sma20;
+
+  if (longBreakoutReady) {
+    longScore += 2;
+    notes.push("Price is pressing a short-term breakout trigger.");
+  }
+
+  if (shortBreakdownReady) {
+    shortScore += 2;
+    notes.push("Price is pressing a short-term breakdown trigger.");
+  }
+
+  if (longPullbackReady) {
+    longScore += 2;
+    notes.push("Price is sitting near the 20-day trend inside a broader uptrend.");
+  }
+
+  if (shortBounceFailReady) {
+    shortScore += 2;
+    notes.push("Price is failing near the 20-day trend inside a broader downtrend.");
+  }
+
+  const lowLiquidity = avgDollarVolume20 != null && avgDollarVolume20 < 25_000_000;
+  const tooExtendedLong =
+    biasFromScores(longScore, shortScore) === "Long" &&
+    ((distFromEma8Pct != null && distFromEma8Pct >= 6) || (rsi14 != null && rsi14 >= 76));
+  const tooExtendedShort =
+    biasFromScores(longScore, shortScore) === "Short" &&
+    ((distFromEma8Pct != null && distFromEma8Pct <= -6) || (rsi14 != null && rsi14 <= 26));
+
+  let setupType = "Range Watch";
+  if (longBreakoutReady) {
+    setupType = "Breakout";
+  } else if (longPullbackReady) {
+    setupType = "Pullback";
+  } else if (longMomentumReady) {
+    setupType = "Momentum Continuation";
+  } else if (shortBreakdownReady) {
+    setupType = "Breakdown";
+  } else if (shortBounceFailReady) {
+    setupType = "Failed Bounce";
+  } else if (shortMomentumReady) {
+    setupType = "Momentum Fade";
+  } else if ((rsi14 || 100) <= 32 && latestClose < (sma20 || latestClose)) {
+    setupType = "Oversold Bounce Watch";
+  }
+
+  return {
+    latest,
+    latestClose,
+    previous,
+    sma20,
+    sma50,
+    ema8,
+    rsi14,
+    avgVolume20,
+    avgDollarVolume20,
+    atr14,
+    recentHigh20,
+    recentLow20,
+    oneDayChangePct,
+    return3dPct,
+    return5dPct,
+    return20dPct,
+    volumeRatio20,
+    distFromBreakoutPct,
+    distFromBreakdownPct,
+    distFromSma20Pct,
+    distFromEma8Pct,
+    longScore,
+    shortScore,
+    setupType,
+    notes,
+    flags: {
+      lowLiquidity,
+      tooExtendedLong,
+      tooExtendedShort,
+    },
+  };
+}
+
+function biasFromScores(longScore, shortScore) {
+  if (longScore - shortScore >= 2) {
+    return "Long";
+  }
+
+  if (shortScore - longScore >= 2) {
+    return "Short";
+  }
+
+  return "Neutral";
+}
+
+function calibrateShortTermSignal(points, targetSetupType, targetBias, targetScore) {
+  if (!targetBias || targetBias === "Neutral" || !targetSetupType || targetSetupType === "Range Watch") {
+    return null;
+  }
+
+  const samples = [];
+  const minLookback = 90;
+  const forward3d = 3;
+  const forward5d = 5;
+
+  for (let index = minLookback; index <= points.length - 1 - forward5d; index += 1) {
+    const window = points.slice(0, index + 1);
+    const state = buildShortTermState(window);
+    const setupScore = state.longScore - state.shortScore;
+    const stateBias = biasFromScores(state.longScore, state.shortScore);
+    if (stateBias !== targetBias) {
+      continue;
+    }
+    if (state.setupType !== targetSetupType) {
+      continue;
+    }
+    if (Math.abs(setupScore - targetScore) > 3) {
+      continue;
+    }
+
+    const currentClose = points[index]?.close;
+    const close3d = points[index + forward3d]?.close;
+    const close5d = points[index + forward5d]?.close;
+    if (currentClose == null || close3d == null || close5d == null) {
+      continue;
+    }
+
+    const rawReturn3d = ((close3d - currentClose) / currentClose) * 100;
+    const rawReturn5d = ((close5d - currentClose) / currentClose) * 100;
+    const directionSign = targetBias === "Long" ? 1 : -1;
+    samples.push({
+      strategyReturn3d: rawReturn3d * directionSign,
+      strategyReturn5d: rawReturn5d * directionSign,
+    });
+  }
+
+  if (samples.length < 4) {
+    return null;
+  }
+
+  const positive3d = samples.filter((sample) => sample.strategyReturn3d > 0).length;
+  const positive5d = samples.filter((sample) => sample.strategyReturn5d > 0).length;
+  return {
+    sampleSize: samples.length,
+    hitRate3d: positive3d / samples.length,
+    hitRate5d: positive5d / samples.length,
+    expectedReturn3d: average(samples.map((sample) => sample.strategyReturn3d)),
+    expectedReturn5d: average(samples.map((sample) => sample.strategyReturn5d)),
+  };
+}
+
+function buildShortTermRecommendation(symbol, history, marketContext = null, options = {}) {
+  const snapshot = buildFlowSnapshot(symbol, history);
+  const state = buildShortTermState(history.points);
+  const benchmarkSymbol = getBenchmarkSymbolForStock(symbol);
+  const broadBenchmark = marketContext?.benchmarks?.[BENCHMARKS.broad] || null;
+  const sectorBenchmark = marketContext?.benchmarks?.[benchmarkSymbol] || null;
+  const relativeStrengthBroad5 = calculateRelativeStrength(snapshot.return5dPct, broadBenchmark?.return5dPct);
+  const relativeStrengthBroad20 = calculateRelativeStrength(snapshot.return20dPct, broadBenchmark?.return20dPct);
+  const relativeStrengthSector20 = calculateRelativeStrength(snapshot.return20dPct, sectorBenchmark?.return20dPct);
+  const regime = marketContext?.regime || "mixed";
+  const summary = [...state.notes];
+  let netScore = state.longScore - state.shortScore;
+  let bias = biasFromScores(state.longScore, state.shortScore);
+
+  if (relativeStrengthBroad5 != null && relativeStrengthBroad5 >= 2) {
+    netScore += 1;
+    if (bias !== "Short") {
+      summary.push(`Five-day relative strength versus ${BENCHMARKS.broad} is positive by ${formatPercent(relativeStrengthBroad5)}.`);
+    }
+  } else if (relativeStrengthBroad5 != null && relativeStrengthBroad5 <= -2) {
+    netScore -= 1;
+    if (bias !== "Long") {
+      summary.push(`Five-day relative strength versus ${BENCHMARKS.broad} is weak by ${formatPercent(relativeStrengthBroad5)}.`);
+    }
+  }
+
+  if (relativeStrengthSector20 != null && relativeStrengthSector20 >= 2) {
+    netScore += 1;
+  } else if (relativeStrengthSector20 != null && relativeStrengthSector20 <= -2) {
+    netScore -= 1;
+  }
+
+  if (regime === "risk_on" && netScore > 0) {
+    netScore += 1;
+    summary.push("Market regime is supportive for long setups.");
+  } else if (regime === "risk_off" && netScore < 0) {
+    netScore -= 1;
+    summary.push("Market regime is supportive for short setups.");
+  } else if (regime === "risk_off" && netScore > 0) {
+    netScore -= 1;
+    summary.push("Market regime is hostile for aggressive long setups.");
+  } else if (regime === "risk_on" && netScore < 0) {
+    netScore += 1;
+    summary.push("Market regime is hostile for aggressive short setups.");
+  } else {
+    summary.push("Market regime is mixed.");
+  }
+
+  bias = netScore >= 2 ? "Long" : netScore <= -2 ? "Short" : "Neutral";
+  const calibration =
+    options.skipCalibration
+      ? null
+      : calibrateShortTermSignal(history.points, state.setupType, bias, netScore);
+
+  const tooExtended = bias === "Long" ? state.flags.tooExtendedLong : bias === "Short" ? state.flags.tooExtendedShort : false;
+  const action = classifyActionPriority(
+    netScore,
+    bias,
+    state.setupType,
+    { lowLiquidity: state.flags.lowLiquidity, tooExtended },
+    regime
+  );
+  const triggerPrice =
+    state.setupType === "Breakout"
+      ? state.recentHigh20
+      : state.setupType === "Breakdown"
+        ? state.recentLow20
+        : state.sma20;
+  const stopDistanceMultiplier = bias === "Short" ? 1.2 : 1.2;
+  const stopPrice =
+    state.atr14 == null || state.latestClose == null
+      ? null
+      : bias === "Short"
+        ? state.latestClose + state.atr14 * stopDistanceMultiplier
+        : state.latestClose - state.atr14 * stopDistanceMultiplier;
+  const targetPrice =
+    state.atr14 == null || state.latestClose == null
+      ? null
+      : bias === "Short"
+        ? state.latestClose - state.atr14 * 2.2
+        : state.latestClose + state.atr14 * 2.2;
+
+  if (tooExtended) {
+    summary.push("Setup is extended from the 8-day trend and should not be chased aggressively.");
+  }
+
+  if (state.flags.lowLiquidity) {
+    summary.push("Dollar volume is below the preferred short-term liquidity threshold.");
+  }
+
+  if (calibration) {
+    summary.push(
+      `Similar ${state.setupType.toLowerCase()} setups: ${calibration.sampleSize}, 3D hit rate ${(calibration.hitRate3d * 100).toFixed(0)}%, avg 5D return ${formatPercent(calibration.expectedReturn5d)}.`
+    );
+  }
+
+  return {
+    symbol,
+    shortName: history.shortName || symbol,
+    setupType: state.setupType,
+    bias,
+    recommendation: action,
+    score: netScore,
+    confidence:
+      action === "Action Now"
+        ? "High"
+        : action === "Near Trigger"
+          ? "Medium"
+          : action === "Watch Only"
+            ? "Low"
+            : "Low",
+    summary: summary.slice(0, 5),
+    metrics: {
+      price: state.latestClose,
+      oneDayChangePct: state.oneDayChangePct,
+      return3dPct: state.return3dPct,
+      return5dPct: state.return5dPct,
+      return20dPct: state.return20dPct,
+      rsi14: state.rsi14,
+      avgVolume20: state.avgVolume20,
+      latestVolume: state.latest.volume ?? null,
+      avgDollarVolume20: state.avgDollarVolume20,
+      volumeRatio20: state.volumeRatio20,
+      sma20: state.sma20,
+      sma50: state.sma50,
+      ema8: state.ema8,
+      atr14: state.atr14,
+      relativeStrengthBroad5,
+      relativeStrengthBroad20,
+      relativeStrengthSector20,
+      marketRegime: regime,
+      benchmarkSymbol,
+      distFromBreakoutPct: state.distFromBreakoutPct,
+      distFromSma20Pct: state.distFromSma20Pct,
+      triggerPrice,
+      stopPrice,
+      targetPrice,
+      stopDistancePct: stopPrice != null && state.latestClose ? (Math.abs(state.latestClose - stopPrice) * 100) / state.latestClose : null,
+      targetDistancePct: targetPrice != null && state.latestClose ? (Math.abs(targetPrice - state.latestClose) * 100) / state.latestClose : null,
+      hitRate3d: calibration?.hitRate3d ?? null,
+      hitRate5d: calibration?.hitRate5d ?? null,
+      expectedReturn3d: calibration?.expectedReturn3d ?? null,
+      expectedReturn5d: calibration?.expectedReturn5d ?? null,
+      calibrationSamples: calibration?.sampleSize ?? 0,
+      tooExtended,
+      lowLiquidity: state.flags.lowLiquidity,
+    },
+  };
+}
+
 function getPointsUpToDate(points, targetDate) {
   return points.filter((point) => point.date <= targetDate);
 }
@@ -1538,6 +1990,241 @@ function buildTrendingRecommendation(symbol, history) {
   };
 }
 
+function extractSymbolCandidates(message) {
+  return [...new Set((message.match(/\b[A-Z]{1,5}\b/g) || []).map((value) => value.trim().toUpperCase()))];
+}
+
+function normalizeStockQueryFromMessage(message) {
+  return String(message || "")
+    .replace(/[?.,!]/g, " ")
+    .replace(
+      /\b(what|how|does|do|is|are|the|next|few|days|look|like|for|about|showing|more|right|now|support|a|an|and|or|stock|shares|ticker|company|trend|trends|market|sentiment|news|supply|demand|over|session|sessions|check|breakout|breakdowns|breakdown|risk|risky|few|sessions|session|in|on|at|of)\b/gi,
+      " "
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function resolveStockFromMessage(message) {
+  const symbolCandidates = extractSymbolCandidates(message);
+  for (const symbol of symbolCandidates) {
+    const result = await tryFetchHistory(symbol, "6mo");
+    if (result.ok) {
+      return { symbol, history: result.history };
+    }
+  }
+
+  const searchQueries = [...new Set([normalizeStockQueryFromMessage(message), String(message || "").trim()].filter(Boolean))];
+  for (const query of searchQueries) {
+    const searchResults = await fetchSearchResults(query);
+    const firstEquity =
+      searchResults.find((item) => ["EQUITY", "ETF", "MUTUALFUND"].includes((item.type || "").toUpperCase())) || searchResults[0];
+    if (!firstEquity) {
+      continue;
+    }
+
+    const historyResult = await tryFetchHistory(firstEquity.symbol, "6mo");
+    if (!historyResult.ok) {
+      continue;
+    }
+
+    return {
+      symbol: firstEquity.symbol,
+      history: historyResult.history,
+      resolvedFrom: query,
+    };
+  }
+
+  if (!searchQueries.length) {
+    throw new Error("I could not identify a stock symbol from that message. Try naming the ticker directly, like NVDA or AAPL.");
+  }
+
+  throw new Error("I could not identify a stock from that message. Try a clearer company name or ticker, like Nvidia or NVDA.");
+}
+
+function scoreTextSentiment(text) {
+  const value = String(text || "").toLowerCase();
+  const positiveTerms = [
+    "beat",
+    "surge",
+    "gain",
+    "growth",
+    "bullish",
+    "upside",
+    "strong",
+    "record",
+    "expand",
+    "rise",
+    "rally",
+    "demand",
+    "upgrade",
+  ];
+  const negativeTerms = [
+    "miss",
+    "drop",
+    "fall",
+    "weak",
+    "cut",
+    "downgrade",
+    "lawsuit",
+    "slowdown",
+    "risk",
+    "concern",
+    "decline",
+    "selloff",
+    "warn",
+  ];
+
+  let score = 0;
+  positiveTerms.forEach((term) => {
+    if (value.includes(term)) {
+      score += 1;
+    }
+  });
+  negativeTerms.forEach((term) => {
+    if (value.includes(term)) {
+      score -= 1;
+    }
+  });
+  return score;
+}
+
+async function fetchNewsForSymbol(symbol, shortName = "") {
+  const payload = await fetchSearchPayload(`${symbol} ${shortName}`.trim(), {
+    quotesCount: 0,
+    newsCount: 8,
+  });
+  const news = (payload.news || []).slice(0, 6).map((item) => {
+    const title = getText(item.title);
+    const publisher = getText(item.publisher || item.providerName);
+    const summary = getText(item.summary || item.snippet);
+    const link = getText(item.link);
+    const publishedAt = item.providerPublishTime ? new Date(item.providerPublishTime * 1000).toISOString() : null;
+    return {
+      title,
+      publisher,
+      summary,
+      link,
+      publishedAt,
+      sentimentScore: scoreTextSentiment(`${title} ${summary}`),
+    };
+  });
+
+  const aggregate = news.reduce((sum, item) => sum + item.sentimentScore, 0);
+  const sentiment =
+    aggregate >= 2 ? "Positive" : aggregate <= -2 ? "Negative" : news.length ? "Mixed" : "Neutral";
+
+  return {
+    sentiment,
+    aggregateScore: aggregate,
+    news,
+  };
+}
+
+function classifySupplyDemand(snapshot) {
+  const volumeRatio = snapshot.volumeRatio20 || 0;
+  const fiveDayMove = snapshot.return5dPct || 0;
+  const priceChange = snapshot.priceChangePct || 0;
+
+  if (volumeRatio >= 1.5 && fiveDayMove >= 3 && priceChange >= 0) {
+    return {
+      label: "Demand-led",
+      summary: `Buy-side pressure is visible with ${volumeRatio.toFixed(1)}x relative volume and a ${formatPercent(fiveDayMove)} five-day move.`,
+    };
+  }
+
+  if (volumeRatio >= 1.5 && fiveDayMove <= -3 && priceChange <= 0) {
+    return {
+      label: "Supply-heavy",
+      summary: `Selling pressure is elevated with ${volumeRatio.toFixed(1)}x relative volume and a ${formatPercent(fiveDayMove)} five-day move.`,
+    };
+  }
+
+  return {
+    label: "Balanced",
+    summary: volumeRatio >= 1.1
+      ? `Volume is active at ${volumeRatio.toFixed(1)}x normal, but price follow-through is not one-sided.`
+      : "Volume and price action look balanced rather than strongly one-sided.",
+  };
+}
+
+function buildNearTermOutlook(shortTermRecommendation, technicalRecommendation, newsSentiment, supplyDemand) {
+  const shortBias = shortTermRecommendation.bias;
+  const shortAction = shortTermRecommendation.recommendation;
+  const technicalLabel = technicalRecommendation.recommendation;
+
+  if (
+    shortBias === "Long" &&
+    ["Action Now", "Near Trigger"].includes(shortAction) &&
+    (technicalLabel.includes("Buy") || technicalLabel === "Watch") &&
+    newsSentiment !== "Negative" &&
+    supplyDemand.label !== "Supply-heavy"
+  ) {
+    return {
+      label: "Bullish lean",
+      summary: "The next-few-days bias is higher, but only if momentum holds and the trigger level stays intact.",
+    };
+  }
+
+  if (
+    shortBias === "Short" &&
+    ["Action Now", "Near Trigger"].includes(shortAction) &&
+    (technicalLabel.includes("Sell") || technicalLabel === "Watch") &&
+    newsSentiment !== "Positive" &&
+    supplyDemand.label !== "Demand-led"
+  ) {
+    return {
+      label: "Bearish lean",
+      summary: "The next-few-days bias is lower, with selling pressure still in control unless price quickly reclaims the short-term trend.",
+    };
+  }
+
+  return {
+    label: "Mixed / watch",
+    summary: "The setup is not clean enough for a strong directional call over the next few days. Treat it as a watchlist name rather than a conviction trade.",
+  };
+}
+
+function buildChatResponse(message, symbol, shortName, shortTermRecommendation, technicalRecommendation, newsSnapshot, supplyDemand) {
+  const outlook = buildNearTermOutlook(
+    shortTermRecommendation,
+    technicalRecommendation,
+    newsSnapshot.sentiment,
+    supplyDemand
+  );
+  const trigger = shortTermRecommendation.metrics.triggerPrice;
+  const stop = shortTermRecommendation.metrics.stopPrice;
+  const target = shortTermRecommendation.metrics.targetPrice;
+
+  const paragraphs = [
+    `${shortName} (${symbol}) currently reads as a ${outlook.label.toLowerCase()} setup. ${outlook.summary}`,
+    `Short-term setup: ${shortTermRecommendation.setupType} with ${shortTermRecommendation.recommendation.toLowerCase()} status and a ${shortTermRecommendation.bias.toLowerCase()} bias. The broader technical engine is at ${technicalRecommendation.recommendation.toLowerCase()}, which keeps the higher-timeframe context ${technicalRecommendation.metrics.marketRegime === "risk_on" ? "supportive" : technicalRecommendation.metrics.marketRegime === "risk_off" ? "defensive" : "mixed"}.`,
+    `Sentiment from recent headlines is ${newsSnapshot.sentiment.toLowerCase()}. ${supplyDemand.summary}`,
+    trigger != null && stop != null && target != null
+      ? `If you are thinking about the next few days rather than a long hold, the practical levels are roughly trigger ${trigger.toFixed(2)}, stop ${stop.toFixed(2)}, and first target ${target.toFixed(2)}.`
+      : "The setup has directional context, but the trigger, stop, and target levels are not clean enough to frame a precise short-term trade.",
+    "This is a rule-based market read from trend, volume, relative strength, and recent headlines. It is not a guaranteed prediction or financial advice.",
+  ];
+
+  return {
+    symbol,
+    shortName,
+    message,
+    outlook: outlook.label,
+    paragraphs,
+    technicalRecommendation,
+    shortTermRecommendation,
+    newsSentiment: newsSnapshot.sentiment,
+    supplyDemand: supplyDemand.label,
+    headlineNews: newsSnapshot.news.slice(0, 3),
+    suggestedPrompts: [
+      `What changes the next few days for ${symbol}?`,
+      `Is ${symbol} showing demand or distribution right now?`,
+      `Does the current news support a breakout for ${symbol}?`,
+    ],
+  };
+}
+
 function serveStatic(reqPath, res) {
   const relativePath = STATIC_ROUTE_ALIASES[reqPath] || reqPath;
   const normalizedPath = path.normalize(relativePath).replace(/^(\.\.[/\\])+/, "");
@@ -1656,6 +2343,56 @@ const server = http.createServer(async (req, res) => {
       const marketContext = await fetchBenchmarkContext(validHistories.map((result) => result.symbol), "1y");
       const recommendations = validHistories.map((result) =>
         buildTechnicalRecommendation(result.symbol, result.history, marketContext)
+      );
+      sendJson(res, 200, {
+        activeWatchlist,
+        requestedSymbols: symbols,
+        recommendations,
+        skippedSymbols,
+        watchlists: listWatchlists(),
+      });
+    } catch (error) {
+      sendJson(res, 502, { error: error.message });
+    }
+    return;
+  }
+
+  if (requestUrl.pathname === "/api/recommendations/short-term" && req.method === "GET") {
+    const activeWatchlist = normalizeWatchlistId(requestUrl.searchParams.get("watchlist"));
+    if (activeWatchlist == null) {
+      sendJson(res, 400, { error: "Invalid watchlist selection." });
+      return;
+    }
+    const symbols = listStoredSymbols(activeWatchlist);
+    if (!symbols.length) {
+      sendJson(res, 200, {
+        activeWatchlist,
+        requestedSymbols: [],
+        recommendations: [],
+        skippedSymbols: [],
+        watchlists: listWatchlists(),
+      });
+      return;
+    }
+
+    try {
+      const historyResults = await Promise.all(symbols.map((symbol) => tryFetchHistory(symbol, "1y")));
+      const validHistories = historyResults.filter((result) => result.ok);
+      const skippedSymbols = historyResults
+        .filter((result) => !result.ok)
+        .map((result) => ({ symbol: result.symbol, error: result.error }));
+
+      if (!validHistories.length) {
+        sendJson(res, 502, {
+          error: "Unable to load market data for any saved symbols.",
+          skippedSymbols,
+        });
+        return;
+      }
+
+      const marketContext = await fetchBenchmarkContext(validHistories.map((result) => result.symbol), "1y");
+      const recommendations = validHistories.map((result) =>
+        buildShortTermRecommendation(result.symbol, result.history, marketContext)
       );
       sendJson(res, 200, {
         activeWatchlist,
@@ -1878,6 +2615,39 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         recommendations: recommendations.sort((left, right) => right.activityScore - left.activityScore).slice(0, 20),
       });
+    } catch (error) {
+      sendJson(res, 502, { error: error.message });
+    }
+    return;
+  }
+
+  if (requestUrl.pathname === "/api/market-chat" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req);
+      const message = String(body.message || "").trim();
+      if (!message) {
+        sendJson(res, 400, { error: "Ask about a stock symbol or company name." });
+        return;
+      }
+
+      const resolved = await resolveStockFromMessage(message);
+      const oneYearHistory = await fetchHistory(resolved.symbol, "1y");
+      const marketContext = await fetchBenchmarkContext([resolved.symbol], "1y");
+      const shortTermRecommendation = buildShortTermRecommendation(resolved.symbol, oneYearHistory, marketContext);
+      const technicalRecommendation = buildTechnicalRecommendation(resolved.symbol, oneYearHistory, marketContext);
+      const newsSnapshot = await fetchNewsForSymbol(resolved.symbol, oneYearHistory.shortName || resolved.symbol);
+      const supplyDemand = classifySupplyDemand(buildFlowSnapshot(resolved.symbol, oneYearHistory));
+      const response = buildChatResponse(
+        message,
+        resolved.symbol,
+        oneYearHistory.shortName || resolved.symbol,
+        shortTermRecommendation,
+        technicalRecommendation,
+        newsSnapshot,
+        supplyDemand
+      );
+
+      sendJson(res, 200, response);
     } catch (error) {
       sendJson(res, 502, { error: error.message });
     }
